@@ -1,0 +1,35 @@
+From 0d69c043045c175863c41dcc5059026c23426527 Mon Sep 17 00:00:00 2001
+From: Vu Duy Hoang <vuduyhoang@gmail.com>
+Date: Wed, 4 Jun 2025 19:13:36 +0700
+Subject: [PATCH] bazel build for rocky linux 9
+
+---
+ .bazelrc | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/.bazelrc b/.bazelrc
+index 03c265d2..9cfc2ba5 100644
+--- a/.bazelrc
++++ b/.bazelrc
+@@ -262,14 +262,14 @@ build:macos-cross-x86_64 --test_timeout=1,30,60,240
+ # macOS links with dynamic libc++ by default, which has good backwards compatibility.
+ # Drop default link flags, which include libstdc++ for Linux
+ build:linux --features=-default_link_libs --host_features=-default_link_libs
+-build:linux --cxxopt='-stdlib=libc++' --host_cxxopt='-stdlib=libc++'
+-build:linux --linkopt='-stdlib=libc++' --host_linkopt='-stdlib=libc++'
+-build:linux --linkopt='-l:libc++.a' --linkopt='-lm' --linkopt='-static-libgcc'
++build:linux --cxxopt='-stdlib=libstdc++' --host_cxxopt='-stdlib=libstdc++'
++build:linux --linkopt='-stdlib=libstdc++' --host_linkopt='-stdlib=libstdc++'
++build:linux --linkopt='-lstdc++' --linkopt='-lm' --linkopt='-lgcc'
+ # We don't expect to distribute host tools, no need to statically link libgcc.
+ # TODO(cleanup): Ideally we'd also use shared libc++ here, we'd just need to install the
+ # libunwind-<version>-dev and libc++abi-<version>-dev packages on CI to have all of shared libc++
+ # available.
+-build:linux --host_linkopt='-l:libc++.a' --host_linkopt='-lm'
++build:linux --host_linkopt='-lstdc++' --host_linkopt='-lm'
+ 
+ # On Linux, enable PIC. In macos pic is the default, and the objc_library rule does not work
+ # correctly if we use this flag since it will not find the object files to include
+-- 
+2.37.1.vfs.0.1
+
