@@ -41,8 +41,6 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         path:
-          output/workerd
-          output/workerd-1.20250607.0-1.el9.x86_64.rpm
+          output/worker*
         name:
           workerd-linux-x86_64-el9
-          workerd-1.20250607.0-1.el9.x86_64.rpm
