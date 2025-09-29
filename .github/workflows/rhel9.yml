@@ -37,10 +37,23 @@ jobs:
     - name: docker run with bazel cache
       # Run the docker container with the bazel cache mounted
       run: docker run --name rhel9bin -v ./output:/home/joe/output -v ~/.bazel:/home/joe/.cache/bazel/_bazel_joe rhel9bin
+    - name: Get workerd version
+      id: get_version
+      run: |
+        VERSION=$(output/workerd --version | awk -F " " '{ print $2 }')
+        echo "workerd version: $VERSION"
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
     - name: Upload binary
       uses: actions/upload-artifact@v4
       with:
         path:
-          output/worker*
+          output/workerd
         name:
           workerd-linux-x86_64-el9
+    - name: Upload rpm
+      uses: actions/upload-artifact@v4
+      with:
+        path:
+          output/workerd*.rpm
+        name:
+          workerd-rpm-el9
