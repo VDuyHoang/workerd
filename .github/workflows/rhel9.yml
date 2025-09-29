@@ -17,8 +17,6 @@ jobs:
           ~/.bazel
         key:
           bazel-${{hashFiles('.bazelversion')}}
-        restore-keys: |
-          bazel-
     - name: Install patch utility and apply patch
       # Install patch utility and apply the patch for RHEL9 compatibility
       run: |

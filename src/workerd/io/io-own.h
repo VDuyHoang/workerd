@@ -2,11 +2,11 @@
 
 #include <workerd/util/weak-refs.h>
 
-#include <kj/async-io.h>
+#include <kj/async.h>
 #include <kj/common.h>
+#include <kj/function.h>
 #include <kj/mutex.h>
 #include <kj/refcount.h>
-#include <kj/string.h>
 #include <kj/vector.h>
 
 #include <typeinfo>
@@ -68,7 +68,7 @@ class OwnedObjectList {
 };
 
 // Object which receives possibly-cross-thread deletions of owned objects.
-class DeleteQueue: public kj::AtomicRefcounted, public kj::EnableAddRefToThis<DeleteQueue> {
+class DeleteQueue: public kj::AtomicRefcounted {
  public:
   DeleteQueue(): crossThreadDeleteQueue(State{kj::Vector<OwnedObject*>()}) {}
 

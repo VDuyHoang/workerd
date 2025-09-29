@@ -7,6 +7,7 @@
 #include <workerd/io/compatibility-date.capnp.h>
 #include <workerd/jsg/jsg.h>
 #include <workerd/jsg/modules-new.h>
+#include <workerd/util/strong-bool.h>
 
 #include <pyodide/generated/pyodide_extra.capnp.h>
 #include <pyodide/pyodide_static.capnp.h>
@@ -14,11 +15,23 @@
 #include <capnp/serialize.h>
 #include <kj/array.h>
 #include <kj/common.h>
-#include <kj/debug.h>
+#include <kj/compat/http.h>
 #include <kj/filesystem.h>
+#include <kj/function.h>
+#include <kj/string.h>
+#include <kj/table.h>
+#include <kj/timer.h>
 
 namespace workerd::api::pyodide {
 
+WD_STRONG_BOOL(CreateBaselineSnapshot);
+WD_STRONG_BOOL(IsTracing);
+WD_STRONG_BOOL(IsValidating);
+WD_STRONG_BOOL(IsWorkerd);
+WD_STRONG_BOOL(SnapshotToDisk);
+
+const auto PYTHON_PACKAGES_URL =
+    "https://storage.googleapis.com/cloudflare-edgeworker-python-packages/";
 class PyodideBundleManager {
  public:
   void setPyodideBundleData(kj::String version, kj::Array<unsigned char> data) const;
@@ -45,6 +58,7 @@ struct PythonConfig {
   kj::Maybe<kj::Own<const kj::Directory>> packageDiskCacheRoot;
   kj::Maybe<kj::Own<const kj::Directory>> pyodideDiskCacheRoot;
   const PyodideBundleManager pyodideBundleManager;
+  const PyodidePackageManager pyodidePackageManager;
   bool createSnapshot;
   bool createBaselineSnapshot;
   bool loadSnapshotFromDisk;
@@ -124,8 +138,6 @@ class PyodideMetadataReader: public jsg::Object {
     bool snapshotToDisk;
     bool createBaselineSnapshot;
     kj::Maybe<kj::Array<kj::byte>> memorySnapshot;
-    kj::Maybe<kj::Array<kj::String>> durableObjectClasses;
-    kj::Maybe<kj::Array<kj::String>> entrypointClasses;
 
     State(kj::String mainModule,
         kj::Array<kj::String> names,
@@ -134,13 +146,11 @@ class PyodideMetadataReader: public jsg::Object {
         kj::String pyodideVersion,
         kj::String packagesVersion,
         kj::String packagesLock,
-        bool isWorkerd,
-        bool isTracing,
-        bool snapshotToDisk,
-        bool createBaselineSnapshot,
-        kj::Maybe<kj::Array<kj::byte>> memorySnapshot,
-        kj::Maybe<kj::Array<kj::String>> durableObjectClasses,
-        kj::Maybe<kj::Array<kj::String>> entrypointClasses)
+        IsWorkerd isWorkerd,
+        IsTracing isTracing,
+        SnapshotToDisk snapshotToDisk,
+        CreateBaselineSnapshot createBaselineSnapshot,
+        kj::Maybe<kj::Array<kj::byte>> memorySnapshot)
         : mainModule(kj::mv(mainModule)),
           moduleInfo(kj::mv(names), kj::mv(contents)),
           requirements(kj::mv(requirements)),
@@ -151,11 +161,13 @@ class PyodideMetadataReader: public jsg::Object {
           isTracingFlag(isTracing),
           snapshotToDisk(snapshotToDisk),
           createBaselineSnapshot(createBaselineSnapshot),
-          memorySnapshot(kj::mv(memorySnapshot)),
-          durableObjectClasses(kj::mv(durableObjectClasses)),
-          entrypointClasses(kj::mv(entrypointClasses)) {}
+          memorySnapshot(kj::mv(memorySnapshot)) {
+      verifyNoMainModuleInVendor();
+    }
 
     State(const State& other);
+
+    void verifyNoMainModuleInVendor();
 
     kj::Own<State> clone();
   };
@@ -224,21 +236,14 @@ class PyodideMetadataReader: public jsg::Object {
 
   kj::HashSet<kj::String> getTransitiveRequirements();
 
-  kj::Maybe<kj::ArrayPtr<kj::String>> getDurableObjectClasses() {
-    KJ_IF_SOME(cls, state->durableObjectClasses) {
-      return cls.asPtr();
-    }
-    return kj::none;
-  }
-
-  kj::Maybe<kj::ArrayPtr<kj::String>> getEntrypointClasses() {
-    KJ_IF_SOME(cls, state->entrypointClasses) {
-      return cls.asPtr();
-    }
-    return kj::none;
-  }
-
   static kj::Array<kj::StringPtr> getBaselineSnapshotImports();
+
+  // Similar to Cloudflare::::getCompatibilityFlags in global-scope.c++, but the key difference is
+  // that it returns experimental flags even if `experimental` is not enabled. This avoids a gotcha
+  // where an experimental compat flag is enabled in our C++ code, but not in our JS code.
+  //
+  // This is only for use by our Python runtime.
+  jsg::JsObject getCompatibilityFlags(jsg::Lock& js);
 
   JSG_RESOURCE_TYPE(PyodideMetadataReader) {
     JSG_METHOD(isWorkerd);
@@ -259,8 +264,7 @@ class PyodideMetadataReader: public jsg::Object {
     JSG_METHOD(getPackagesLock);
     JSG_METHOD(isCreatingBaselineSnapshot);
     JSG_METHOD(getTransitiveRequirements);
-    JSG_METHOD(getDurableObjectClasses);
-    JSG_METHOD(getEntrypointClasses);
+    JSG_METHOD(getCompatibilityFlags);
     JSG_STATIC_METHOD(getBaselineSnapshotImports);
   }
 
@@ -284,7 +288,8 @@ class PyodideMetadataReader: public jsg::Object {
 struct MemorySnapshotResult {
   kj::Array<kj::byte> snapshot;
   kj::Array<kj::String> importedModulesList;
-  JSG_STRUCT(snapshot, importedModulesList);
+  kj::String snapshotType;
+  JSG_STRUCT(snapshot, importedModulesList, snapshotType);
 };
 
 // This used to be declared nested as ArtifactBundler::State, but then there was a need to
@@ -317,7 +322,8 @@ struct ArtifactBundler_State {
   kj::Own<ArtifactBundler_State> clone() {
     return kj::heap<ArtifactBundler_State>(packageManager,
         existingSnapshot.map(
-            [](kj::Array<const kj::byte>& data) { return kj::heapArray<const kj::byte>(data); }));
+            [](kj::Array<const kj::byte>& data) { return kj::heapArray<const kj::byte>(data); }),
+        isValidating);
   }
 };
 
@@ -457,14 +463,15 @@ class SimplePythonLimiter: public jsg::Object {
     }
   }
 
-  void finishStartup() {
+  void finishStartup(kj::Maybe<kj::String> snapshotType) {
     KJ_IF_SOME(cb, getTimeCb) {
       JSG_REQUIRE(startTime != kj::none, TypeError, "Need to call `beginStartup` first.");
       auto endTime = cb();
       kj::Duration diff = endTime - KJ_ASSERT_NONNULL(startTime);
       auto diffMs = diff / kj::MILLISECONDS;
 
-      JSG_REQUIRE(diffMs <= startupLimitMs, TypeError, "Python Worker startup exceeded CPU limit");
+      JSG_REQUIRE(diffMs <= startupLimitMs, TypeError, "Python Worker startup exceeded CPU limit ",
+          diffMs, "<=", startupLimitMs, " with snapshot ", snapshotType.orDefault(kj::str("none")));
     }
   }
 
@@ -476,8 +483,8 @@ class SimplePythonLimiter: public jsg::Object {
 
 class SetupEmscripten: public jsg::Object {
  public:
-  SetupEmscripten(const EmscriptenRuntime& emscriptenRuntime)
-      : emscriptenRuntime(emscriptenRuntime) {};
+  SetupEmscripten(EmscriptenRuntime emscriptenRuntime)
+      : emscriptenRuntime(kj::mv(emscriptenRuntime)) {};
 
   jsg::JsValue getModule(jsg::Lock& js);
 
@@ -486,11 +493,21 @@ class SetupEmscripten: public jsg::Object {
   }
 
  private:
-  const EmscriptenRuntime& emscriptenRuntime;
+  EmscriptenRuntime emscriptenRuntime;
   void visitForGc(jsg::GcVisitor& visitor);
 };
 
 kj::Maybe<kj::String> getPyodideLock(PythonSnapshotRelease::Reader pythonSnapshotRelease);
+
+// Returns a list of filenames we need to fetch according to the pyodide-lock.json file
+// in addition to the requirements argument, we also must include all "stdlib" packages
+// as well as any transitive dependencies needed
+kj::Array<kj::String> getPythonPackageFiles(kj::StringPtr lockFileContents,
+    kj::ArrayPtr<kj::String> requirements,
+    kj::StringPtr packagesVersion);
+
+// Constructs the path to a Python package in the package repository
+kj::String getPyodidePackagePath(kj::StringPtr packagesVersion, kj::StringPtr filename);
 
 template <class Registry>
 void registerPyodideModules(Registry& registry, auto featureFlags) {

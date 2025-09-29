@@ -1,4 +1,4 @@
--std=c++20
+-std=c++23
 -stdlib=libc++
 -xc++
 -nostdinc
@@ -9,10 +9,10 @@
 -Iexternal/abseil-cpp/
 -Iexternal/simdutf/
 -Iexternal/nbytes/include/
--Iexternal/com_google_benchmark/include/
+-Iexternal/codspeed/google_benchmark/include/
 -Iexternal/perfetto/include/
 -Iexternal/perfetto/include/perfetto/base/build_configs/bazel/
--Iexternal/ssl/include
+-Iexternal/boringssl+/include
 -Iexternal/ncrypto/include
 -isystembazel-bin/external/sqlite3
 -Isrc
@@ -37,6 +37,8 @@
 -isystembazel-bin/external/capnp-cpp/src/kj/compat/_virtual_includes/kj-gzip
 -isystembazel-bin/external/capnp-cpp/src/kj/compat/_virtual_includes/kj-http
 -isystembazel-bin/external/capnp-cpp/src/kj/compat/_virtual_includes/kj-tls
+-isystembazel-bin/external/workerd-cxx/_virtual_includes/core/
+-isystembazel-bin/external/workerd-cxx/kj-rs/_virtual_includes/kj-rs-lib/
 -isystembazel-bin/external/v8
 -isystembazel-bin/external/v8/icu
 -isystembazel-bin/src
@@ -51,6 +53,9 @@
 -isystembazel-bin/src/rust/cxx-integration/_virtual_includes/cxx-integration@cxx
 -isystembazel-bin/src/rust/cxx-integration-test/_virtual_includes/cxx-integration-test@cxx
 -isystembazel-bin/src/rust/dns/_virtual_includes/dns@cxx
+-isystembazel-bin/src/rust/python-parser/_virtual_includes/python-parser@cxx
+-isystembazel-bin/src/rust/net/_virtual_includes/net@cxx
+-isystembazel-bin/src/rust/transpiler/_virtual_includes/transpiler@cxx
 -D_FORTIFY_SOURCE=1
 -D_LIBCPP_REMOVE_TRANSITIVE_INCLUDES
 -D_LIBCPP_NO_ABI_TAG
@@ -116,10 +121,8 @@
 -Wextra
 -Wno-builtin-macro-redefined
 -Wno-free-nonheap-object
--Wno-ignored-qualifiers
 -Wno-missing-field-initializers
 -Wno-sign-compare
--Wno-strict-aliasing
 -Wno-unused-parameter
 -Wself-assign
 -Wthread-safety

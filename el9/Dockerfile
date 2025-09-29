@@ -1,10 +1,10 @@
 FROM rockylinux/rockylinux:9 AS builder
-ARG BAZEL_VERSION=8.2.1
+ARG BAZEL_VERSION=8.3.1
 ARG UID=1000
 RUN yum install -y git patch tcl epel-release rpm-build && \
   dnf copr -y enable @fedora-llvm-team/llvm-snapshots centos-stream-9-x86_64 && \
-  dnf copr -y enable lihaohong/bazel && \
-  yum -y install clang19 lld19 clang19-devel bazel
+  dnf copr -y enable duyhoang/el9 && \
+  yum -y install clang19 lld19 clang19-devel bazel-${BAZEL_VERSION}
 RUN useradd -u ${UID} -m joe
 RUN mkdir -p /home/joe/workerd
 WORKDIR /home/joe/workerd

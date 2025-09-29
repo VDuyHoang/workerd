@@ -52,17 +52,34 @@ void Container::start(jsg::Lock& js, jsg::Optional<StartupOptions> maybeOptions)
   running = true;
 }
 
+jsg::Promise<void> Container::setInactivityTimeout(jsg::Lock& js, int64_t durationMs) {
+  JSG_REQUIRE(
+      durationMs > 0, TypeError, "setInactivityTimeout() cannot be called with a durationMs <= 0");
+
+  auto req = rpcClient->setInactivityTimeoutRequest();
+
+  req.setDurationMs(durationMs);
+  return IoContext::current().awaitIo(js, req.sendIgnoringResult());
+}
+
 jsg::Promise<void> Container::monitor(jsg::Lock& js) {
   JSG_REQUIRE(running, Error, "monitor() cannot be called on a container that is not running.");
 
   return IoContext::current()
-      .awaitIo(js, rpcClient->monitorRequest(capnp::MessageSize{4, 0}).sendIgnoringResult())
-      .then(js, [this](jsg::Lock& js) {
+      .awaitIo(js, rpcClient->monitorRequest(capnp::MessageSize{4, 0}).send())
+      .then(js, [this](jsg::Lock& js, capnp::Response<rpc::Container::MonitorResults> results) {
     running = false;
+    auto exitCode = results.getExitCode();
     KJ_IF_SOME(d, destroyReason) {
       jsg::Value error = kj::mv(d);
       destroyReason = kj::none;
       js.throwException(kj::mv(error));
+    }
+
+    if (exitCode != 0) {
+      auto err = js.error(kj::str("Container exited with unexpected exit code: ", exitCode));
+      KJ_ASSERT_NONNULL(err.tryCast<jsg::JsObject>()).set(js, "exitCode", js.num(exitCode));
+      js.throwException(err);
     }
   }, [this](jsg::Lock& js, jsg::Value&& error) {
     running = false;
@@ -121,7 +138,7 @@ class Container::TcpPortWorkerInterface final: public WorkerInterface {
 
     // We don't support TLS.
     JSG_REQUIRE(parsedUrl.scheme != "https", Error,
-        "Connencting to a container using HTTPS is not currently supported; use HTTP instead. "
+        "Connecting to a container using HTTPS is not currently supported; use HTTP instead. "
         "TLS is unnecessary anyway, as the connection is already secure by default.");
 
     // Schemes other than http: and https: should have been rejected earlier, but let's verify.
@@ -130,7 +147,7 @@ class Container::TcpPortWorkerInterface final: public WorkerInterface {
     // We need to convert the URL from proxy format (full URL in request line) to host format
     // (path in request line, hostname in Host header).
     auto newHeaders = headers.cloneShallow();
-    newHeaders.set(kj::HttpHeaderId::HOST, parsedUrl.host);
+    newHeaders.setPtr(kj::HttpHeaderId::HOST, parsedUrl.host);
     auto noHostUrl = parsedUrl.toString(kj::Url::Context::HTTP_REQUEST);
 
     // Make a TCP connection...

@@ -1,20 +1,6 @@
 {
   "$schema": "deps.schema.json",
   "repositories": [
-    {
-      "name": "bazel_skylib",
-      "type": "github_release",
-      "owner": "bazelbuild",
-      "repo": "bazel-skylib",
-      "file_regex": "^bazel-skylib-[0-9\\.]+\\.tar\\.gz$"
-    },
-    {
-      "name": "rules_python",
-      "type": "github_release",
-      "owner": "bazelbuild",
-      "repo": "rules_python",
-      "file_regex": "^rules_python-.*\\.tar\\.gz$"
-    },
     // rust
     {
       "name": "rules_rust",
@@ -64,77 +50,12 @@
       "file_type": "executable",
       "downloaded_file_path": "downloaded.exe"
     },
-    {
-      "name": "rules_shell",
-      "type": "github_release",
-      "owner": "bazelbuild",
-      "repo": "rules_shell",
-      "file_regex": "^rules_shell-"
-    },
-    {
-      "name": "aspect_rules_esbuild",
-      "type": "github_release",
-      "owner": "aspect-build",
-      "repo": "rules_esbuild",
-      "file_regex": "^rules_esbuild-.*\\.tar\\.gz$"
-    },
-    {
-      // Needed for running the latest Node.js due to aspect_rules_js using older
-      // version by default
-      "name": "rules_nodejs",
-      "type": "github_release",
-      "owner": "bazel-contrib",
-      "repo": "rules_nodejs",
-      "file_regex": "^rules_nodejs-.*\\.tar\\.gz$"
-    },
-    {
-      "name": "aspect_rules_js",
-      "type": "github_release",
-      "owner": "aspect-build",
-      "repo": "rules_js",
-      "file_regex": "^rules_js-.*\\.tar\\.gz$"
-    },
-    {
-      "name": "aspect_rules_ts",
-      "type": "github_release",
-      "owner": "aspect-build",
-      "repo": "rules_ts",
-      "file_regex": "^rules_ts-.*\\.tar\\.gz$"
-    },
-    //clang-format
-    {
-      "name": "clang-format-linux-amd64",
-      "type": "github_release",
-      "owner": "cloudflare",
-      "repo": "workerd-tools",
-      "file_regex": "llvm-.*-linux-amd64-clang-format",
-      "file_type": "executable",
-      "freeze_version": "llvm-18.1.8"
-    },
-    {
-      "name": "clang-format-linux-arm64",
-      "type": "github_release",
-      "owner": "cloudflare",
-      "repo": "workerd-tools",
-      "file_regex": "llvm-.*-linux-arm64-clang-format",
-      "file_type": "executable",
-      "freeze_version": "llvm-18.1.8"
-    },
-    {
-      "name": "clang-format-darwin-arm64",
-      "type": "github_release",
-      "owner": "cloudflare",
-      "repo": "workerd-tools",
-      "file_regex": "llvm-.*-darwin-arm64-clang-format",
-      "file_type": "executable",
-      "freeze_version": "llvm-18.1.8"
-    },
     // microbenchmark
     {
+      "name": "codspeed",
       "type": "github_release",
-      "name": "com_google_benchmark",
-      "owner": "google",
-      "repo": "benchmark"
+      "owner": "CodSpeedHQ",
+      "repo": "codspeed-cpp"
     }
   ]
 }

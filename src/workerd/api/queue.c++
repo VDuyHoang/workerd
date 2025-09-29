@@ -183,11 +183,11 @@ kj::Promise<void> WorkerQueue::send(
   KJ_IF_SOME(opts, options) {
     KJ_IF_SOME(type, opts.contentType) {
       auto validatedType = validateContentType(type);
-      headers.add(HDR_MSG_FORMAT, validatedType);
+      headers.addPtrPtr(HDR_MSG_FORMAT, validatedType);
       contentType = validatedType;
     }
     KJ_IF_SOME(secs, opts.delaySeconds) {
-      headers.add(HDR_MSG_DELAY, kj::str(secs));
+      headers.addPtr(HDR_MSG_DELAY, kj::str(secs));
     }
   }
 
@@ -195,7 +195,7 @@ kj::Promise<void> WorkerQueue::send(
   KJ_IF_SOME(type, contentType) {
     serialized = serialize(js, body, type, SerializeArrayBufferBehavior::DEEP_COPY);
   } else if (workerd::FeatureFlags::get(js).getQueuesJsonMessages()) {
-    headers.add("X-Msg-Fmt", IncomingQueueMessage::ContentType::JSON);
+    headers.addPtrPtr("X-Msg-Fmt", IncomingQueueMessage::ContentType::JSON);
     serialized = serialize(
         js, body, IncomingQueueMessage::ContentType::JSON, SerializeArrayBufferBehavior::DEEP_COPY);
   } else {
@@ -306,14 +306,14 @@ kj::Promise<void> WorkerQueue::sendBatch(jsg::Lock& js,
   // decide whether it's too large.
   // TODO(someday): Enforce the size limits here instead for very slightly better performance.
   auto headers = kj::HttpHeaders(context.getHeaderTable());
-  headers.add("CF-Queue-Batch-Count"_kj, kj::str(messageCount));
-  headers.add("CF-Queue-Batch-Bytes"_kj, kj::str(totalSize));
-  headers.add("CF-Queue-Largest-Msg"_kj, kj::str(largestMessage));
+  headers.addPtr("CF-Queue-Batch-Count"_kj, kj::str(messageCount));
+  headers.addPtr("CF-Queue-Batch-Bytes"_kj, kj::str(totalSize));
+  headers.addPtr("CF-Queue-Largest-Msg"_kj, kj::str(largestMessage));
   headers.set(kj::HttpHeaderId::CONTENT_TYPE, MimeType::JSON.toString());
 
   KJ_IF_SOME(opts, options) {
     KJ_IF_SOME(secs, opts.delaySeconds) {
-      headers.add(HDR_MSG_DELAY, kj::str(secs));
+      headers.addPtr(HDR_MSG_DELAY, kj::str(secs));
     }
   }
 
@@ -526,18 +526,7 @@ StartQueueEventResponse startQueueEvent(EventTarget& globalEventTarget,
 
 }  // namespace
 
-kj::Promise<WorkerInterface::CustomEvent::Result> QueueCustomEventImpl::run(
-    kj::Own<IoContext_IncomingRequest> incomingRequest,
-    kj::Maybe<kj::StringPtr> entrypointName,
-    Frankenvalue props,
-    kj::TaskSet& waitUntilTasks) {
-  // This method has three main chunks of logic:
-  // 1. Do all necessary setup work. This starts right below this comment.
-  // 2. Call into the worker's queue event handler.
-  // 3. Wait on the necessary portions of the worker's code to complete.
-  incomingRequest->delivered();
-  auto& context = incomingRequest->getContext();
-
+kj::Maybe<tracing::EventInfo> QueueCustomEventImpl::getEventInfo() const {
   kj::String queueName;
   uint32_t batchSize;
   KJ_SWITCH_ONEOF(params) {
@@ -551,10 +540,20 @@ kj::Promise<WorkerInterface::CustomEvent::Result> QueueCustomEventImpl::run(
     }
   }
 
-  KJ_IF_SOME(t, incomingRequest->getWorkerTracer()) {
-    t.setEventInfo(context.getInvocationSpanContext(), context.now(),
-        tracing::QueueEventInfo(kj::str(queueName), batchSize));
-  }
+  return tracing::EventInfo(tracing::QueueEventInfo(kj::mv(queueName), batchSize));
+}
+
+kj::Promise<WorkerInterface::CustomEvent::Result> QueueCustomEventImpl::run(
+    kj::Own<IoContext_IncomingRequest> incomingRequest,
+    kj::Maybe<kj::StringPtr> entrypointName,
+    Frankenvalue props,
+    kj::TaskSet& waitUntilTasks) {
+  // This method has three main chunks of logic:
+  // 1. Do all necessary setup work. This starts right below this comment.
+  // 2. Call into the worker's queue event handler.
+  // 3. Wait on the necessary portions of the worker's code to complete.
+  incomingRequest->delivered();
+  auto& context = incomingRequest->getContext();
 
   // Create a custom refcounted type for holding the queueEvent so that we can pass it to the
   // waitUntil'ed callback safely without worrying about whether this coroutine gets canceled.

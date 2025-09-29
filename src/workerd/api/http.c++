@@ -17,7 +17,6 @@
 #include <workerd/jsg/ser.h>
 #include <workerd/jsg/url.h>
 #include <workerd/util/abortable.h>
-#include <workerd/util/autogate.h>
 #include <workerd/util/http-util.h>
 #include <workerd/util/mimetype.h>
 #include <workerd/util/stream-utils.h>
@@ -90,7 +89,7 @@ jsg::ByteString normalizeHeaderValue(jsg::Lock& js, jsg::ByteString value) {
   if (slice.size() == value.size()) {
     return kj::mv(value);
   }
-  return js.accountedByteString(kj::str(slice));
+  return jsg::ByteString(kj::str(slice));
 }
 
 void requireValidHeaderName(const jsg::ByteString& name) {
@@ -151,9 +150,9 @@ Headers::Headers(jsg::Lock& js, jsg::Dict<jsg::ByteString, jsg::ByteString> dict
 Headers::Headers(jsg::Lock& js, const Headers& other): guard(Guard::NONE) {
   for (auto& header: other.headers) {
     Header copy{
-      js.accountedByteString(header.second.key),
-      js.accountedByteString(header.second.name),
-      KJ_MAP(value, header.second.values) { return js.accountedByteString(value); },
+      jsg::ByteString(kj::str(header.second.key)),
+      jsg::ByteString(kj::str(header.second.name)),
+      KJ_MAP(value, header.second.values) { return jsg::ByteString(kj::str(value)); },
     };
     kj::StringPtr keyRef = copy.key;
     KJ_ASSERT(headers.insert(std::make_pair(keyRef, kj::mv(copy))).second);
@@ -161,8 +160,10 @@ Headers::Headers(jsg::Lock& js, const Headers& other): guard(Guard::NONE) {
 }
 
 Headers::Headers(jsg::Lock& js, const kj::HttpHeaders& other, Guard guard): guard(Guard::NONE) {
+  // TODO(soon): Remove this. Throw if the any header values are invalid.
+  throwIfInvalidHeaderValue(other);
   other.forEach([this, &js](auto name, auto value) {
-    append(js, js.accountedByteString(name), js.accountedByteString(value));
+    append(js, jsg::ByteString(kj::str(name)), jsg::ByteString(kj::str(value)));
   });
 
   this->guard = guard;
@@ -179,7 +180,7 @@ jsg::Ref<Headers> Headers::clone(jsg::Lock& js) const {
 void Headers::shallowCopyTo(kj::HttpHeaders& out) {
   for (auto& entry: headers) {
     for (auto& value: entry.second.values) {
-      out.add(entry.second.name, value);
+      out.addPtrPtr(entry.second.name, value);
     }
   }
 }
@@ -190,7 +191,7 @@ bool Headers::hasLowerCase(kj::StringPtr name) {
     KJ_DREQUIRE(!('A' <= c && c <= 'Z'));
   }
 #endif
-  return headers.find(name) != headers.end();
+  return headers.contains(name);
 }
 
 kj::Array<Headers::DisplayedHeader> Headers::getDisplayedHeaders(jsg::Lock& js) {
@@ -202,13 +203,13 @@ kj::Array<Headers::DisplayedHeader> Headers::getDisplayedHeaders(jsg::Lock& js) 
         // combining them.
         for (auto& value: entry.second.values) {
           copy.add(Headers::DisplayedHeader{
-            .key = js.accountedByteString(entry.first),
-            .value = js.accountedByteString(value),
+            .key = jsg::ByteString(kj::str(entry.first)),
+            .value = jsg::ByteString(kj::str(value)),
           });
         }
       } else {
-        copy.add(Headers::DisplayedHeader{.key = js.accountedByteString(entry.first),
-          .value = js.accountedByteString(kj::strArray(entry.second.values, ", "))});
+        copy.add(Headers::DisplayedHeader{.key = jsg::ByteString(kj::str(entry.first)),
+          .value = jsg::ByteString(kj::strArray(entry.second.values, ", "))});
       }
     }
     return copy.releaseAsArray();
@@ -216,8 +217,8 @@ kj::Array<Headers::DisplayedHeader> Headers::getDisplayedHeaders(jsg::Lock& js) 
     // The old behavior before the standard getSetCookie() API was introduced...
     auto headersCopy = KJ_MAP(mapEntry, headers) {
       const auto& header = mapEntry.second;
-      return DisplayedHeader{js.accountedByteString(header.key),
-        js.accountedByteString(kj::strArray(header.values, ", "))};
+      return DisplayedHeader{
+        jsg::ByteString(kj::str(header.key)), jsg::ByteString(kj::strArray(header.values, ", "))};
     };
     return headersCopy;
   }
@@ -278,7 +279,7 @@ kj::Maybe<jsg::ByteString> Headers::getNoChecks(jsg::Lock& js, kj::StringPtr nam
   if (iter == headers.end()) {
     return kj::none;
   } else {
-    return js.accountedByteString(kj::strArray(iter->second.values, ", "));
+    return jsg::ByteString(kj::strArray(iter->second.values, ", "));
   }
 }
 
@@ -306,20 +307,20 @@ kj::ArrayPtr<jsg::ByteString> Headers::getAll(jsg::ByteString name) {
 
 bool Headers::has(jsg::ByteString name) {
   requireValidHeaderName(name);
-  return headers.find(toLower(kj::mv(name))) != headers.end();
+  return headers.contains(toLower(kj::mv(name)));
 }
 
 void Headers::set(jsg::Lock& js, jsg::ByteString name, jsg::ByteString value) {
   checkGuard();
+  requireValidHeaderName(name);
+  value = normalizeHeaderValue(js, kj::mv(value));
+  requireValidHeaderValue(value);
   setUnguarded(js, kj::mv(name), kj::mv(value));
 }
 
 void Headers::setUnguarded(jsg::Lock& js, jsg::ByteString name, jsg::ByteString value) {
-  requireValidHeaderName(name);
   // The variation of toLower we use here creates a copy.
-  auto key = js.accountedByteString(toLower(name));
-  value = normalizeHeaderValue(js, kj::mv(value));
-  requireValidHeaderValue(value);
+  auto key = jsg::ByteString(toLower(name));
   auto [iter, emplaced] = headers.try_emplace(key, kj::mv(key), kj::mv(name), kj::mv(value));
   if (!emplaced) {
     // Overwrite existing value(s).
@@ -332,7 +333,7 @@ void Headers::append(jsg::Lock& js, jsg::ByteString name, jsg::ByteString value)
   checkGuard();
   requireValidHeaderName(name);
   // The variation of toLower we use here creates a copy.
-  auto key = js.accountedByteString(toLower(name));
+  auto key = jsg::ByteString(toLower(name));
   value = normalizeHeaderValue(js, kj::mv(value));
   requireValidHeaderValue(value);
   auto [iter, emplaced] = headers.try_emplace(key, kj::mv(key), kj::mv(name), kj::mv(value));
@@ -384,16 +385,16 @@ jsg::Ref<Headers::KeyIterator> Headers::keys(jsg::Lock& js) {
       // the keys iterator can end up having multiple set-cookie instances.
       if (entry.first == "set-cookie") {
         for (auto n = 0; n < entry.second.values.size(); n++) {
-          keysCopy.add(js.accountedByteString(entry.first));
+          keysCopy.add(jsg::ByteString(kj::str(entry.first)));
         }
       } else {
-        keysCopy.add(js.accountedByteString(entry.first));
+        keysCopy.add(jsg::ByteString(kj::str(entry.first)));
       }
     }
     return js.alloc<KeyIterator>(IteratorState<jsg::ByteString>{keysCopy.releaseAsArray()});
   } else {
     auto keysCopy =
-        KJ_MAP(mapEntry, headers) { return js.accountedByteString(mapEntry.second.key); };
+        KJ_MAP(mapEntry, headers) { return jsg::ByteString(kj::str(mapEntry.second.key)); };
     return js.alloc<KeyIterator>(IteratorState<jsg::ByteString>{kj::mv(keysCopy)});
   }
 }
@@ -405,16 +406,16 @@ jsg::Ref<Headers::ValueIterator> Headers::values(jsg::Lock& js) {
       // single value, so the values iterator must separate them.
       if (entry.first == "set-cookie") {
         for (auto& value: entry.second.values) {
-          values.add(js.accountedByteString(value));
+          values.add(jsg::ByteString(kj::str(value)));
         }
       } else {
-        values.add(js.accountedByteString(kj::strArray(entry.second.values, ", ")));
+        values.add(jsg::ByteString(kj::strArray(entry.second.values, ", ")));
       }
     }
     return js.alloc<ValueIterator>(IteratorState<jsg::ByteString>{values.releaseAsArray()});
   } else {
     auto valuesCopy = KJ_MAP(mapEntry, headers) {
-      return js.accountedByteString(kj::strArray(mapEntry.second.values, ", "));
+      return jsg::ByteString(kj::strArray(mapEntry.second.values, ", "));
     };
     return js.alloc<ValueIterator>(IteratorState<jsg::ByteString>{kj::mv(valuesCopy)});
   }
@@ -579,7 +580,7 @@ jsg::Ref<Headers> Headers::deserialize(
 
     auto value = deserializer.readLengthDelimitedString();
 
-    result->append(js, js.accountedByteString(kj::mv(name)), js.accountedByteString(kj::mv(value)));
+    result->append(js, jsg::ByteString(kj::mv(name)), jsg::ByteString(kj::mv(value)));
   }
 
   // Don't actually set the guard until here because it may block the ability to call `append()`.
@@ -735,8 +736,7 @@ Body::Body(jsg::Lock& js, kj::Maybe<ExtractedBody> init, Headers& headers)
           if (!headers.hasLowerCase("content-type")) {
             // The spec allows the user to override the Content-Type, if they wish, so we only set
             // the Content-Type if it doesn't already exist.
-            headers.set(
-                js, js.accountedByteString("Content-Type"_kj), js.accountedByteString(kj::mv(ct)));
+            headers.set(js, jsg::ByteString(kj::str("Content-Type")), jsg::ByteString(kj::mv(ct)));
           } else if (MimeType::FORM_DATA == ct) {
             // Custom content-type request/responses with FormData are broken since they require a
             // boundary parameter only the FormData serializer can provide. Let's warn if a dev does this.
@@ -1246,21 +1246,20 @@ kj::Maybe<kj::String> Request::serializeCfBlobJson(jsg::Lock& js) {
     case CacheMode::NOSTORE:
       ttl = -1;
       obj.set(js, "cacheLevel", js.str("bypass"_kjc));
+      if (obj.has(js, "cacheTtl")) {
+        jsg::JsValue oldTtl = obj.get(js, "cacheTtl");
+        JSG_REQUIRE(oldTtl == js.num(ttl), TypeError,
+            kj::str("CacheTtl: ", oldTtl, ", is not compatible with cache: ",
+                getCacheModeName(cacheMode).orDefault("none"_kj), " header."));
+      } else {
+        obj.set(js, "cacheTtl", js.num(ttl));
+      }
       break;
     case CacheMode::NOCACHE:
-      ttl = 0;
+      obj.set(js, "cacheForceRevalidate", js.boolean(true));
       break;
     case CacheMode::NONE:
       KJ_UNREACHABLE;
-  }
-
-  if (obj.has(js, "cacheTtl")) {
-    jsg::JsValue oldTtl = obj.get(js, "cacheTtl");
-    JSG_REQUIRE(oldTtl == js.num(ttl), TypeError,
-        kj::str("CacheTtl: ", oldTtl, ", is not compatible with cache: ",
-            getCacheModeName(cacheMode).orDefault("none"_kj), " header."));
-  } else {
-    obj.set(js, "cacheTtl", js.num(ttl));
   }
 
   return clone.serialize(js);
@@ -1295,59 +1294,59 @@ void Request::serialize(jsg::Lock& js,
   // Our strategy is to construct an initializer dict object and serialize that as a JS object.
   // This makes the deserialization end really simple (just call the constructor), and it also
   // gives us extensibility: we can add new fields without having to bump the serialization tag.
-  serializer.write(js,
-      jsg::JsValue(initDictHandler.wrap(js,
-          RequestInitializerDict{
-            // GET is the default, so only serialize the method if it's something else.
-            .method = method == kj::HttpMethod::GET ? jsg::Optional<kj::String>() : kj::str(method),
+  // clang-format off
+  serializer.write(js, jsg::JsValue(initDictHandler.wrap(js, RequestInitializerDict{
+    // GET is the default, so only serialize the method if it's something else.
+    .method = method == kj::HttpMethod::GET ? jsg::Optional<kj::String>() : kj::str(method),
 
-            .headers = headers.addRef(),
+    .headers = headers.addRef(),
 
-            .body = getBody().map([](jsg::Ref<ReadableStream> stream) -> Body::Initializer {
-    // jsg::Ref<ReadableStream> is one of the possible variants of Body::Initializer.
-    return kj::mv(stream);
-  }),
+    .body = getBody().map([](jsg::Ref<ReadableStream> stream) -> Body::Initializer {
+      // jsg::Ref<ReadableStream> is one of the possible variants of Body::Initializer.
+      return kj::mv(stream);
+    }),
 
-            // "manual" is the default for `redirect`, so only encode if it's not that.
-            .redirect = redirect == Redirect::MANUAL ? kj::str(getRedirect())
-                                                     : kj::Maybe<kj::String>(kj::none),
+    // "manual" is the default for `redirect`, so only encode if it's not that.
+    .redirect = redirect == Redirect::MANUAL ? kj::str(getRedirect())
+                                              : kj::Maybe<kj::String>(kj::none),
 
-            // We have to ignore .fetcher for serialization. We can't simply fail if a fetcher is present
-            // because requests received by the top-level fetch handler actually have .fetcher set to
-            // the hidden "next" binding, which historically could be different from null (although in
-            // practice these days it is always the same). We obviously want to be able to serialize
-            // requests received by the top-level fetch handler so... we have to ignore this. This
-            // property should probably go away in any case.
+    // We have to ignore .fetcher for serialization. We can't simply fail if a fetcher is present
+    // because requests received by the top-level fetch handler actually have .fetcher set to
+    // the hidden "next" binding, which historically could be different from null (although in
+    // practice these days it is always the same). We obviously want to be able to serialize
+    // requests received by the top-level fetch handler so... we have to ignore this. This
+    // property should probably go away in any case.
 
-            .cf = cf.getRef(js),
+    .cf = cf.getRef(js),
 
-            .cache = getCacheModeName(cacheMode).map(
-                [](kj::StringPtr name) -> kj::String { return kj::str(name); }),
+    .cache = getCacheModeName(cacheMode).map(
+        [](kj::StringPtr name) -> kj::String { return kj::str(name); }),
 
-            // .mode is unimplemented
-            // .credentials is unimplemented
-            // .referrer is unimplemented
-            // .referrerPolicy is unimplemented
-            // .integrity is required to be empty
+    // .mode is unimplemented
+    // .credentials is unimplemented
+    // .referrer is unimplemented
+    // .referrerPolicy is unimplemented
+    // .integrity is required to be empty
 
-            // If an AbortSignal is present, we'll try to serialize it. As of this writing, AbortSignal
-            // is not serializable, but we could add support for sending it over RPC in the future.
-            //
-            // Note we have to double-Maybe this, so that if no signal is present, the property is absent
-            // instead of `null`.
-            .signal =
-                signal.map([&js](jsg::Ref<AbortSignal>& s) -> kj::Maybe<jsg::Ref<AbortSignal>> {
-    if (s->isIgnoredForSubrequests(js)) {
-      return kj::none;
-    }
+    // If an AbortSignal is present, we'll try to serialize it. As of this writing, AbortSignal
+    // is not serializable, but we could add support for sending it over RPC in the future.
+    //
+    // Note we have to double-Maybe this, so that if no signal is present, the property is absent
+    // instead of `null`.
+    .signal =
+        signal.map([&js](jsg::Ref<AbortSignal>& s) -> kj::Maybe<jsg::Ref<AbortSignal>> {
+      if (s->isIgnoredForSubrequests(js)) {
+        return kj::none;
+      }
 
-    return s.addRef();
-  }),
+      return s.addRef();
+    }),
 
-            // Only serialize responseBodyEncoding if it's not the default AUTO
-            .encodeResponseBody = responseBodyEncoding == Response_BodyEncoding::AUTO
-                ? jsg::Optional<kj::String>()
-                : kj::str("manual")})));
+    // Only serialize responseBodyEncoding if it's not the default AUTO
+    .encodeResponseBody = responseBodyEncoding == Response_BodyEncoding::AUTO
+        ? jsg::Optional<kj::String>()
+        : kj::str("manual")
+  })));
 }
 
 jsg::Ref<Request> Request::deserialize(jsg::Lock& js,
@@ -1378,7 +1377,6 @@ Response::Response(jsg::Lock& js,
       urlList(kj::mv(urlList)),
       webSocket(kj::mv(webSocket)),
       bodyEncoding(bodyEncoding),
-      hasEnabledWebSocketCompression(FeatureFlags::get(js).getWebSocketCompression()),
       asyncContext(jsg::AsyncContextFrame::currentRef(js)) {}
 
 // Defined later in this file.
@@ -1562,8 +1560,8 @@ jsg::Ref<Response> Response::json_(
 
   const auto maybeSetContentType = [](jsg::Lock& js, auto headers) {
     if (!headers->hasLowerCase("content-type"_kj)) {
-      headers->set(js, js.accountedByteString("content-type"_kj),
-          js.accountedByteString(MimeType::JSON.toString()));
+      headers->set(js, jsg::ByteString(kj::str("content-type")),
+          jsg::ByteString(MimeType::JSON.toString()));
     }
     return kj::mv(headers);
   };
@@ -1658,6 +1656,8 @@ kj::Promise<DeferredProxy<void>> Response::send(jsg::Lock& js,
         "Worker tried to return a WebSocket in a response to a request "
         "which did not contain the header \"Upgrade: websocket\".");
 
+    const bool hasEnabledWebSocketCompression = FeatureFlags::get(js).getWebSocketCompression();
+
     if (hasEnabledWebSocketCompression &&
         outHeaders.get(kj::HttpHeaderId::SEC_WEBSOCKET_EXTENSIONS) == kj::none) {
       // Since workerd uses `MANUAL_COMPRESSION` mode for websocket compression, we need to
@@ -1671,13 +1671,11 @@ kj::Promise<DeferredProxy<void>> Response::send(jsg::Lock& js,
         // requested, so we'll just use the client's requested headers.
         KJ_IF_SOME(reqHeaders, maybeReqHeaders) {
           KJ_IF_SOME(value, reqHeaders.get(kj::HttpHeaderId::SEC_WEBSOCKET_EXTENSIONS)) {
-            outHeaders.set(kj::HttpHeaderId::SEC_WEBSOCKET_EXTENSIONS, value);
+            outHeaders.setPtr(kj::HttpHeaderId::SEC_WEBSOCKET_EXTENSIONS, value);
           }
         }
       }
-    }
-
-    if (!hasEnabledWebSocketCompression) {
+    } else if (!hasEnabledWebSocketCompression) {
       // While we guard against an origin server including `Sec-WebSocket-Extensions` in a Response
       // (we don't send the extension in an offer, and if the server includes it in a response we
       // will reject the connection), a Worker could still explicitly add the header to a Response.
@@ -1891,10 +1889,13 @@ jsg::Promise<jsg::Ref<Response>> fetchImplNoOutputLock(jsg::Lock& js,
     }
   }
 
+  // Get client and trace context (if needed) in one clean call
+  auto clientWithTracing = fetcher->getClientWithTracing(ioContext, jsRequest->serializeCfBlobJson(js), "fetch"_kjc);
+  auto traceContext = kj::mv(clientWithTracing.traceContext);
+
   // TODO(cleanup): Don't convert to HttpClient. Use the HttpService interface instead. This
   //   requires a significant rewrite of the code below. It'll probably get simpler, though?
-  kj::Own<kj::HttpClient> client =
-      asHttpClient(fetcher->getClient(ioContext, jsRequest->serializeCfBlobJson(js), "fetch"_kjc));
+  kj::Own<kj::HttpClient> client = asHttpClient(kj::mv(clientWithTracing.client));
 
   kj::HttpHeaders headers(ioContext.getHeaderTable());
   jsRequest->shallowCopyHeadersTo(headers);
@@ -1909,16 +1910,43 @@ jsg::Promise<jsg::Ref<Response>> fetchImplNoOutputLock(jsg::Lock& js,
       KJ_FALLTHROUGH;
     case Request::CacheMode::NOCACHE:
       if (headers.get(headerIds.cacheControl) == kj::none) {
-        headers.set(headerIds.cacheControl, "no-cache");
+        headers.setPtr(headerIds.cacheControl, "no-cache");
       }
       if (headers.get(headerIds.pragma) == kj::none) {
-        headers.set(headerIds.pragma, "no-cache");
+        headers.setPtr(headerIds.pragma, "no-cache");
       }
       KJ_FALLTHROUGH;
     case Request::CacheMode::NONE:
       break;
     default:
       KJ_UNREACHABLE;
+  }
+
+  KJ_IF_SOME(ctx, traceContext) {
+    ctx.userSpan.setTag("network.protocol.name"_kjc, kj::str("http"));
+    ctx.userSpan.setTag("network.protocol.version"_kjc, kj::str("HTTP/1.1"));
+    ctx.userSpan.setTag("http.request.method"_kjc, kj::str(jsRequest->getMethodEnum()));
+    ctx.userSpan.setTag("url.full"_kjc, kj::str(jsRequest->getUrl()));
+
+    KJ_IF_SOME(userAgent, headers.get(headerIds.userAgent)) {
+      ctx.userSpan.setTag("user_agent.original"_kjc, kj::str(userAgent));
+    }
+
+    KJ_IF_SOME(contentType, headers.get(headerIds.contentType)) {
+      ctx.userSpan.setTag("http.request.header.content-type"_kjc, kj::str(contentType));
+    }
+
+    KJ_IF_SOME(contentLength, headers.get(headerIds.contentLength)) {
+      ctx.userSpan.setTag("http.request.header.content-length"_kjc, kj::str(contentLength));
+    }
+
+    KJ_IF_SOME(accept, headers.get(headerIds.accept)) {
+      ctx.userSpan.setTag("http.request.header.accept"_kjc, kj::str(accept));
+    }
+
+    KJ_IF_SOME(acceptEncoding, headers.get(headerIds.acceptEncoding)) {
+      ctx.userSpan.setTag("http.request.header.accept-encoding"_kjc, kj::str(acceptEncoding));
+    }
   }
 
   kj::String url =
@@ -1968,6 +1996,11 @@ jsg::Promise<jsg::Ref<Response>> fetchImplNoOutputLock(jsg::Lock& js,
       // standard does not say that we should. Hence, we always use StreamEncoding::IDENTITY.
       // https://github.com/whatwg/fetch/issues/589
       auto maybeLength = jsBody->tryGetLength(StreamEncoding::IDENTITY);
+      KJ_IF_SOME(ctx, traceContext) {
+        KJ_IF_SOME(length, maybeLength) {
+          ctx.userSpan.setTag("http.request.body.size"_kjc, int64_t(length));
+        }
+      }
 
       if (maybeLength.orDefault(1) == 0 &&
           headers.get(kj::HttpHeaderId::CONTENT_LENGTH) == kj::none &&
@@ -1978,7 +2011,7 @@ jsg::Promise<jsg::Ref<Response>> fetchImplNoOutputLock(jsg::Lock& js,
         // the code in global-scope.c++ on the receiving end will decide the body should be null.
         // We'd like to avoid this weird discontinuity, so let's set Content-Length explicitly to
         // 0.
-        headers.set(kj::HttpHeaderId::CONTENT_LENGTH, "0"_kj);
+        headers.setPtr(kj::HttpHeaderId::CONTENT_LENGTH, "0"_kj);
       }
 
       nativeRequest = client->request(jsRequest->getMethodEnum(), url, headers, maybeLength);
@@ -2024,9 +2057,15 @@ jsg::Promise<jsg::Ref<Response>> fetchImplNoOutputLock(jsg::Lock& js,
       return kj::mv(exception);
     }),
         [fetcher = kj::mv(fetcher), jsRequest = kj::mv(jsRequest), urlList = kj::mv(urlList),
-            client = kj::mv(client)](jsg::Lock& js,
+            client = kj::mv(client), traceContext = kj::mv(traceContext)](jsg::Lock& js,
             kj::HttpClient::Response&& response) mutable -> jsg::Promise<jsg::Ref<Response>> {
       response.body = response.body.attach(kj::mv(client));
+      KJ_IF_SOME(ctx, traceContext) {
+        ctx.userSpan.setTag("http.response.status_code"_kjc, int64_t(response.statusCode));
+        KJ_IF_SOME(length, response.body->tryGetLength()) {
+          ctx.userSpan.setTag("http.response.body.size"_kjc, int64_t(length));
+        }
+      }
       return handleHttpResponse(
           js, kj::mv(fetcher), kj::mv(jsRequest), kj::mv(urlList), kj::mv(response));
     });
@@ -2069,8 +2108,16 @@ jsg::Promise<jsg::Ref<Response>> handleHttpResponse(jsg::Lock& js,
   if (isRedirectStatusCode(response.statusCode) &&
       jsRequest->getRedirectEnum() == Request::Redirect::FOLLOW) {
     KJ_IF_SOME(l, response.headers->get(kj::HttpHeaderId::LOCATION)) {
-      return handleHttpRedirectResponse(
-          js, kj::mv(fetcher), kj::mv(jsRequest), kj::mv(urlList), response.statusCode, l);
+
+      // Pump the response body to a singleton null stream before following the redirect.
+      auto& ioContext = IoContext::current();
+      return ioContext.awaitIo(js,
+          response.body->pumpTo(getGlobalNullOutputStream()).ignoreResult().attach(kj::mv(response.body)),
+          [fetcher = kj::mv(fetcher), jsRequest = kj::mv(jsRequest), urlList = kj::mv(urlList),
+           status = response.statusCode, location = kj::str(l)](jsg::Lock& js) mutable {
+        return handleHttpRedirectResponse(
+            js, kj::mv(fetcher), kj::mv(jsRequest), kj::mv(urlList), status, kj::mv(location));
+      });
     } else {
       // No Location header. That's OK, we just return the response as is.
       // See https://fetch.spec.whatwg.org/#http-redirect-fetch step 2.
@@ -2138,6 +2185,33 @@ jsg::Promise<jsg::Ref<Response>> handleHttpRedirectResponse(jsg::Lock& js,
   if (urlList.size() - 1 >= MAX_REDIRECT_COUNT) {
     auto exception = JSG_KJ_EXCEPTION(FAILED, TypeError, "Too many redirects.", urlList);
     return js.rejectedPromise<jsg::Ref<Response>>(kj::mv(exception));
+  }
+
+  if (FeatureFlags::get(js).getStripAuthorizationOnCrossOriginRedirect()) {
+    auto base = urlList.back().toString();
+
+    auto currentUrl = KJ_UNWRAP_OR(jsg::Url::tryParse(base.asPtr()), {
+      auto exception =
+        JSG_KJ_EXCEPTION(FAILED, TypeError, "Invalid current URL; unable to follow redirect.");
+      return js.rejectedPromise<jsg::Ref<Response>>(kj::mv(exception));
+    });
+
+    auto locationUrl = KJ_UNWRAP_OR(jsg::Url::tryParse(location, base.asPtr()), {
+      auto exception =
+        JSG_KJ_EXCEPTION(FAILED, TypeError, "Invalid Location header; unable to follow redirect.");
+      return js.rejectedPromise<jsg::Ref<Response>>(kj::mv(exception));
+    });
+
+    if (currentUrl.getOrigin() != locationUrl.getOrigin()) {
+      // If request’s current URL’s origin is not same origin with locationURL’s origin, then
+      // for each headerName of CORS non-wildcard request-header name, delete headerName from
+      // request’s header list.
+      // -- Fetch spec s. 4.4.13
+      // <https://fetch.spec.whatwg.org/#http-redirect-fetch>
+      //  (NB: "CORS non-wildcard request-header name" consists solely of "Authorization")
+
+      jsRequest->getHeaders(js)->delete_(jsg::ByteString(kj::str("authorization")));
+    }
   }
 
   urlList.add(kj::mv(KJ_ASSERT_NONNULL(redirectedLocation)));
@@ -2286,8 +2360,8 @@ jsg::Promise<jsg::Ref<Response>> fetchImplNoOutputLock(jsg::Lock& js,
       }
 
       auto headers = js.alloc<Headers>();
-      headers->set(js, js.accountedByteString("content-type"_kj),
-          js.accountedByteString(dataUrl.getMimeType().toString()));
+      headers->set(js, jsg::ByteString(kj::str("content-type"_kj)),
+          jsg::ByteString(dataUrl.getMimeType().toString()));
       return js.resolvedPromise(Response::constructor(js, kj::mv(maybeResponseBody),
           Response::InitializerDict{
             .status = 200,
@@ -2397,6 +2471,41 @@ rpc::JsRpcTarget::Client Fetcher::getClientForOneCall(
   // (Don't extend `path` because we're the root.)
 
   return result;
+}
+
+void Fetcher::serialize(jsg::Lock& js, jsg::Serializer& serializer) {
+  auto& handler = JSG_REQUIRE_NONNULL(serializer.getExternalHandler(), DOMDataCloneError,
+      "ServiceStub cannot be serialized in this context.");
+  auto externalHandler = dynamic_cast<Frankenvalue::CapTableBuilder*>(&handler);
+  JSG_REQUIRE(externalHandler != nullptr, DOMDataCloneError,
+      "ServiceStub cannot be serialized in this context.");
+
+  auto channel = getSubrequestChannel(IoContext::current());
+  channel->requireAllowsTransfer();
+  serializer.writeRawUint32(externalHandler->add(kj::mv(channel)));
+}
+
+jsg::Ref<Fetcher> Fetcher::deserialize(jsg::Lock& js,
+    rpc::SerializationTag tag, jsg::Deserializer& deserializer) {
+  auto& handler = KJ_REQUIRE_NONNULL(
+      deserializer.getExternalHandler(), "got ServiceStub in unexpected context?");
+  auto externalHandler = dynamic_cast<Frankenvalue::CapTableReader*>(&handler);
+  KJ_REQUIRE(externalHandler != nullptr, "got ServiceStub in unexpected context?");
+
+  auto& cap = KJ_REQUIRE_NONNULL(externalHandler->get(deserializer.readRawUint32()),
+      "serialized ServiceStub had invalid cap table index");
+
+  if (auto channel = dynamic_cast<IoChannelFactory::SubrequestChannel*>(&cap)) {
+    return js.alloc<Fetcher>(
+        IoContext::current().addObject(kj::addRef(*channel)),
+        RequiresHostAndProtocol::YES, /*isInHouse=*/false);
+  } else if (auto channel = dynamic_cast<IoChannelCapTableEntry*>(&cap)) {
+    return js.alloc<Fetcher>(
+        channel->getChannelNumber(IoChannelCapTableEntry::Type::SUBREQUEST),
+        RequiresHostAndProtocol::YES, /*isInHouse=*/false);
+  } else {
+    KJ_FAIL_REQUIRE("ServiceStub capability in Frankenvalue is not a SubrequestChannel?");
+  }
 }
 
 static jsg::Promise<void> throwOnError(
@@ -2511,7 +2620,6 @@ jsg::Promise<void> Fetcher::delete_(jsg::Lock& js, kj::String url) {
 jsg::Promise<Fetcher::QueueResult> Fetcher::queue(
     jsg::Lock& js, kj::String queueName, kj::Array<ServiceBindingQueueMessage> messages) {
   auto& ioContext = IoContext::current();
-  auto worker = getClient(ioContext, kj::none, "queue"_kjc);
 
   auto encodedMessages = kj::heapArrayBuilder<IncomingQueueMessage>(messages.size());
   for (auto& msg: messages) {
@@ -2538,6 +2646,8 @@ jsg::Promise<Fetcher::QueueResult> Fetcher::queue(
     }
   }
 
+  // Only create worker interface after the error checks above to reduce overhead in case of errors.
+  auto worker = getClient(ioContext, kj::none, "queue"_kjc);
   auto event = kj::refcounted<api::QueueCustomEventImpl>(QueueEvent::Params{
     .queueName = kj::mv(queueName),
     .messages = encodedMessages.finish(),
@@ -2585,16 +2695,62 @@ jsg::Promise<Fetcher::ScheduledResult> Fetcher::scheduled(
 
 kj::Own<WorkerInterface> Fetcher::getClient(
     IoContext& ioContext, kj::Maybe<kj::String> cfStr, kj::ConstString operationName) {
+  auto clientWithTracing = getClientWithTracing(ioContext, kj::mv(cfStr), kj::mv(operationName));
+  return clientWithTracing.client.attach(kj::mv(clientWithTracing.traceContext));
+}
+
+Fetcher::ClientWithTracing Fetcher::getClientWithTracing(
+    IoContext& ioContext, kj::Maybe<kj::String> cfStr, kj::ConstString operationName) {
   KJ_SWITCH_ONEOF(channelOrClientFactory) {
     KJ_CASE_ONEOF(channel, uint) {
-      return ioContext.getSubrequestChannel(
-          channel, isInHouse, kj::mv(cfStr), kj::mv(operationName));
+      // For channels, create trace context
+      auto userSpan = ioContext.makeUserTraceSpan(kj::ConstString(kj::str(operationName)));
+      auto traceSpan = ioContext.makeTraceSpan(kj::ConstString(kj::str(operationName)));
+      auto traceContext = TraceContext(kj::mv(traceSpan), kj::mv(userSpan));
+      auto client = ioContext.getSubrequestChannel(channel, isInHouse, kj::mv(cfStr), traceContext);
+      return ClientWithTracing{kj::mv(client), kj::mv(traceContext)};
+    }
+    KJ_CASE_ONEOF(channel, IoOwn<IoChannelFactory::SubrequestChannel>) {
+      auto userSpan = ioContext.makeUserTraceSpan(kj::ConstString(kj::str(operationName)));
+      auto traceSpan = ioContext.makeTraceSpan(kj::ConstString(kj::str(operationName)));
+      auto traceContext = TraceContext(kj::mv(traceSpan), kj::mv(userSpan));
+      auto client = ioContext.getSubrequest(
+          [&](TraceContext& tracing, IoChannelFactory& ioChannelFactory) {
+        return channel->startRequest({.cfBlobJson = kj::mv(cfStr), .tracing = tracing});
+      }, {
+        .inHouse = isInHouse,
+        .wrapMetrics = !isInHouse,
+        .operationName = kj::mv(operationName),
+      });
+      return ClientWithTracing{kj::mv(client), kj::mv(traceContext)};
     }
     KJ_CASE_ONEOF(outgoingFactory, IoOwn<OutgoingFactory>) {
-      return outgoingFactory->newSingleUseClient(kj::mv(cfStr));
+      // For outgoing factories, no trace context needed
+      auto client = outgoingFactory->newSingleUseClient(kj::mv(cfStr));
+      return ClientWithTracing{kj::mv(client), kj::none};
     }
     KJ_CASE_ONEOF(outgoingFactory, kj::Own<CrossContextOutgoingFactory>) {
-      return outgoingFactory->newSingleUseClient(ioContext, kj::mv(cfStr));
+      // For cross-context outgoing factories, no trace context needed
+      auto client = outgoingFactory->newSingleUseClient(ioContext, kj::mv(cfStr));
+      return ClientWithTracing{kj::mv(client), kj::none};
+    }
+  }
+  KJ_UNREACHABLE;
+}
+
+kj::Own<IoChannelFactory::SubrequestChannel> Fetcher::getSubrequestChannel(IoContext& ioContext) {
+  KJ_SWITCH_ONEOF(channelOrClientFactory) {
+    KJ_CASE_ONEOF(channel, uint) {
+      return ioContext.getIoChannelFactory().getSubrequestChannel(channel);
+    }
+    KJ_CASE_ONEOF(channel, IoOwn<IoChannelFactory::SubrequestChannel>) {
+      return kj::addRef(*channel);
+    }
+    KJ_CASE_ONEOF(outgoingFactory, IoOwn<OutgoingFactory>) {
+      return outgoingFactory->getSubrequestChannel();
+    }
+    KJ_CASE_ONEOF(outgoingFactory, kj::Own<CrossContextOutgoingFactory>) {
+      return outgoingFactory->getSubrequestChannel(ioContext);
     }
   }
   KJ_UNREACHABLE;

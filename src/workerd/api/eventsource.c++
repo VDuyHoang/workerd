@@ -5,6 +5,7 @@
 #include "eventsource.h"
 
 #include "http.h"
+#include "messagechannel.h"
 #include "streams/common.h"
 
 #include <workerd/io/features.h>
@@ -306,9 +307,10 @@ void EventSource::notifyMessages(jsg::Lock& js, kj::Array<PendingMessage> messag
     for (auto& message: messages) {
       auto data = kj::str(kj::delimited(kj::mv(message.data), "\n"_kjc));
       if (data.size() == 0) continue;
+      kj::String type = kj::mv(message.event).orDefault(kj::str("message"));
       dispatchEventImpl(js,
-          js.alloc<MessageEvent>(kj::mv(message.event), kj::mv(data), kj::mv(message.id),
-              impl.map([](FetchImpl& i) -> jsg::Url& { return i.url; })));
+          js.alloc<MessageEvent>(js, kj::mv(type), js.str(data), kj::mv(message.id),
+              kj::none /** source **/, impl.map([](FetchImpl& i) -> jsg::Url& { return i.url; })));
     }
   }, [&](jsg::Value exception) {
     // If we end up with an exception being thrown in one of the event handlers, we will
@@ -363,7 +365,7 @@ void EventSource::start(jsg::Lock& js) {
         // TODO(cleanup): Using jsg::ByteString here is really annoying. It would be nice to have
         // an internal alternative that doesn't require an allocation.
         KJ_IF_SOME(contentType,
-            response->getHeaders(js)->get(js, js.accountedByteString("content-type"_kj))) {
+            response->getHeaders(js)->get(js, jsg::ByteString(kj::str("content-type")))) {
         bool invalid = false;
         KJ_IF_SOME(parsed, MimeType::tryParse(contentType)) {
         invalid = parsed != MimeType::EVENT_STREAM;
@@ -419,13 +421,12 @@ void EventSource::start(jsg::Lock& js) {
       });
 
   auto headers = js.alloc<Headers>();
-  headers->set(js, js.accountedByteString("accept"_kj),
-      js.accountedByteString(MimeType::EVENT_STREAM.essence()));
   headers->set(
-      js, js.accountedByteString("cache-control"_kj), js.accountedByteString("no-cache"_kj));
+      js, jsg::ByteString(kj::str("accept")), jsg::ByteString(MimeType::EVENT_STREAM.essence()));
+  headers->set(js, jsg::ByteString(kj::str("cache-control")), jsg::ByteString(kj::str("no-cache")));
   if (lastEventId != ""_kjc) {
     headers->set(
-        js, js.accountedByteString("last-event-id"_kj), js.accountedByteString(lastEventId));
+        js, jsg::ByteString(kj::str("last-event-id")), jsg::ByteString(kj::str(lastEventId)));
   }
 
   fetchImpl(js, kj::mv(fetcher), kj::str(i.url),

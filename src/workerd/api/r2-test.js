@@ -40,6 +40,11 @@ const hexKey =
 const keyMd5 = 'WGR5pEm07DroP3hYRAh8Yw==';
 const conditionalDate = '946684800000';
 
+// Test checksums - known values for testing
+const md5Buffer = new Uint8Array([
+  0x9a, 0x03, 0x64, 0xb9, 0xe9, 0x9b, 0xb4, 0x80, 0xdd, 0x25, 0xe1, 0xf0, 0x28,
+  0x4c, 0x85, 0x55,
+]);
 const objResponse = {
   name: key,
   version: 'objectVersion',
@@ -354,6 +359,12 @@ export default {
               });
             }
           }
+          case 'md5checksum': {
+            return Response.json({
+              ...objResponse,
+              md5: md5Buffer,
+            });
+          }
         }
         return Response.json(objResponse);
       }
@@ -646,6 +657,22 @@ export default {
     }
     // Conditionals
     {
+      try {
+        await env.BUCKET.put('throwOnInvalidEtag', body, {
+          onlyIf: new Headers({
+            'if-match': 'strongEtag',
+          }),
+        });
+        throw new Error('This should have thrown');
+      } catch {}
+      try {
+        await env.BUCKET.put('throwOnInvalidEtag', body, {
+          onlyIf: new Headers({
+            'if-none-match': 'strongEtag',
+          }),
+        });
+        throw new Error('This should have thrown');
+      } catch {}
       await env.BUCKET.put('onlyIfStrongEtag', body, {
         onlyIf: {
           etagMatches: 'strongEtag',
@@ -863,6 +890,14 @@ export default {
           );
         }
       }
+    }
+    // Checksums
+    {
+      // This exists purely to test the instrumentation
+      let resp = await env.BUCKET.put('md5checksum', body, {
+        md5: md5Buffer,
+      });
+      assert.ok(resp);
     }
   },
 };

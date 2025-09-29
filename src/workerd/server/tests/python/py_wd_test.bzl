@@ -1,24 +1,25 @@
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("//:build/python_metadata.bzl", "BUNDLE_VERSION_INFO")
 load("//:build/wd_test.bzl", "wd_test")
 
-FEATURE_FLAGS = {
-    "0.26.0a2": [],
-    "0.27.7": ["python_workers_20250116"],
-    "development": ["python_workers_development", "python_external_packages"],
-}
+def _get_enable_flags(python_flag):
+    flags = [BUNDLE_VERSION_INFO[python_flag]["enable_flag_name"]]
+    if "python_workers" not in flags:
+        flags += ["python_workers"]
+    return flags
 
 def _py_wd_test_helper(
         name,
         src,
         python_flag,
-        snapshot,
+        make_snapshot,
         *,
         args = [],
         **kwargs):
     name_flag = name + "_" + python_flag
     templated_src = name_flag.replace("/", "-") + "@template"
     templated_src = "/".join(src.split("/")[:-1] + [templated_src])
-    flags = FEATURE_FLAGS[python_flag] + ["python_workers"]
+    flags = _get_enable_flags(python_flag)
     feature_flags_txt = ",".join(['"{}"'.format(flag) for flag in flags])
 
     expand_template(
@@ -32,7 +33,7 @@ def _py_wd_test_helper(
         src = templated_src,
         name = name_flag + "@",
         args = args,
-        python_snapshot_test = snapshot,
+        python_snapshot_test = make_snapshot,
         **kwargs
     )
 
@@ -50,8 +51,8 @@ def py_wd_test(
         make_snapshot = True,
         **kwargs):
     if python_flags == "all":
-        python_flags = FEATURE_FLAGS.keys()
-    python_flags = [flag for flag in python_flags if flag not in skip_python_flags and flag in FEATURE_FLAGS]
+        python_flags = BUNDLE_VERSION_INFO.keys()
+    python_flags = [flag for flag in python_flags if flag not in skip_python_flags and flag in BUNDLE_VERSION_INFO]
     if data == None and directory != None:
         data = native.glob(
             [
@@ -80,7 +81,7 @@ def py_wd_test(
             name,
             src,
             python_flag,
-            snapshot = make_snapshot,
+            make_snapshot = make_snapshot,
             data = data,
             args = args,
             size = size,

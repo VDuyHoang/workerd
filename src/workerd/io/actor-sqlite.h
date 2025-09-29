@@ -29,6 +29,11 @@ class ActorSqlite final: public ActorCacheInterface, private kj::TaskSet::ErrorH
     virtual kj::Promise<void> scheduleRun(kj::Maybe<kj::Date> newAlarmTime);
 
     static const Hooks DEFAULT;
+
+    static constexpr inline Hooks& getDefaultHooks() {
+      // Hooks has no member variables, so const_cast is acceptable.
+      return const_cast<Hooks&>(Hooks::DEFAULT);
+    }
   };
 
   // Constructs ActorSqlite, arranging to honor the output gate, that is, any writes to the
@@ -43,8 +48,7 @@ class ActorSqlite final: public ActorCacheInterface, private kj::TaskSet::ErrorH
   explicit ActorSqlite(kj::Own<SqliteDatabase> dbParam,
       OutputGate& outputGate,
       kj::Function<kj::Promise<void>()> commitCallback,
-      // Hooks has no member variables, so const_cast is acceptable.
-      Hooks& hooks = const_cast<Hooks&>(Hooks::DEFAULT));
+      Hooks& hooks = Hooks::getDefaultHooks());
 
   bool isCommitScheduled() {
     return !currentTxn.is<NoTxn>() || deleteAllCommitScheduled;
@@ -52,6 +56,11 @@ class ActorSqlite final: public ActorCacheInterface, private kj::TaskSet::ErrorH
 
   kj::Maybe<SqliteDatabase&> getSqliteDatabase() override {
     return *db;
+  }
+
+  kj::Maybe<SqliteKv&> getSqliteKv() override {
+    requireNotBroken();
+    return kv;
   }
 
   kj::OneOf<kj::Maybe<Value>, kj::Promise<kj::Maybe<Value>>> get(
@@ -96,7 +105,7 @@ class ActorSqlite final: public ActorCacheInterface, private kj::TaskSet::ErrorH
   // into application errors as appropriate when committing an implicit transaction.
   class TxnCommitRegulator: public SqliteDatabase::Regulator {
    public:
-    void onError(kj::Maybe<int> sqliteErrorCode, kj::StringPtr message) const;
+    void onError(kj::Maybe<int> sqliteErrorCode, kj::StringPtr message) const override;
   };
   static constexpr TxnCommitRegulator TRUSTED_TXN_COMMIT;
 
@@ -183,7 +192,7 @@ class ActorSqlite final: public ActorCacheInterface, private kj::TaskSet::ErrorH
     // The `Own<void>` returned by `armAlarmHandler()` is actually set up to point to the
     // `ActorSqlite` itself, but with an alternate disposer that deletes the alarm rather than
     // the whole object.
-    void disposeImpl(void* pointer) const {
+    void disposeImpl(void* pointer) const override {
       reinterpret_cast<ActorSqlite*>(pointer)->maybeDeleteDeferredAlarm();
     }
   };
@@ -210,6 +219,13 @@ class ActorSqlite final: public ActorCacheInterface, private kj::TaskSet::ErrorH
   kj::Maybe<kj::ForkedPromise<void>> pendingCommit;
 
   kj::TaskSet commitTasks;
+
+  class AlarmLaterErrorHandler: public kj::TaskSet::ErrorHandler {
+   public:
+    void taskFailed(kj::Exception&& exception) override;
+  };
+  AlarmLaterErrorHandler alarmLaterErrorHandler;
+  kj::TaskSet alarmLaterTasks;
 
   void onWrite();
 

@@ -25,7 +25,6 @@ inline void requireOnStack(void* self) {
   V(ArgumentsObject)                                                                               \
   V(NativeError)                                                                                   \
   V(Name)                                                                                          \
-  V(Function)                                                                                      \
   V(AsyncFunction)                                                                                 \
   V(GeneratorFunction)                                                                             \
   V(GeneratorObject)                                                                               \
@@ -291,6 +290,7 @@ class JsRegExp final: public JsBase<v8::RegExp, JsRegExp> {
 class JsDate final: public JsBase<v8::Date, JsDate> {
  public:
   jsg::ByteString toUTCString(Lock& js) const;
+  jsg::ByteString toISOString(Lock& js) const;
   operator kj::Date() const;
   using JsBase<v8::Date, JsDate>::JsBase;
 };
@@ -363,6 +363,13 @@ class JsObject final: public JsBase<v8::Object, JsObject> {
   void set(Lock& js, kj::StringPtr name, const JsValue& value);
   void setReadOnly(Lock& js, kj::StringPtr name, const JsValue& value);
   void setNonEnumerable(Lock& js, const JsSymbol& name, const JsValue& value);
+
+  // Like set but uses the defineProperty API instead in order to override
+  // the default property attributes. This is useful for defining properties
+  // that otherwise would not be normally settable, such as the name of an
+  // error object.
+  void defineProperty(Lock& js, kj::StringPtr name, const JsValue& value);
+
   JsValue get(Lock& js, const JsValue& name) KJ_WARN_UNUSED_RESULT;
   JsValue get(Lock& js, kj::StringPtr name) KJ_WARN_UNUSED_RESULT;
 
@@ -497,6 +504,46 @@ inline JsObject Lock::opaque(T&& inner) {
   return JsObject(wrapped.template As<v8::Object>());
 }
 
+class JsFunction final: public JsBase<v8::Function, JsFunction> {
+ public:
+  using JsBase<v8::Function, JsFunction>::JsBase;
+
+  // Calls the function with the given receiver and arguments.
+  template <IsJsValue... Args>
+  JsValue call(Lock& js, const JsValue& recv, Args... args) const {
+    v8::Local<v8::Function> fn = *this;
+    v8::Local<v8::Value> argv[] = {args...};
+    return JsValue(check(fn->Call(js.v8Context(), recv, sizeof...(Args), argv)));
+  }
+
+  // Calls the function with a null receiver and arguments.
+  template <IsJsValue... Args>
+  JsValue callNoReceiver(Lock& js, Args... args) const {
+    return call(js, js.null(), kj::fwd<Args...>(args...));
+  }
+
+  // Calls the function with the given receiver and arguments.
+  JsValue call(Lock& js, const JsValue& recv, v8::LocalVector<v8::Value>& args) const;
+
+  // Calls the function with a null receiver and arguments. When null is passed
+  // as the receiver, the global object is used instead.
+  JsValue callNoReceiver(Lock& js, v8::LocalVector<v8::Value>& args) const;
+
+  // Gets the function's length property.
+  size_t length(Lock& js) const;
+
+  // Gets the function's name property.
+  JsString name(Lock& js) const;
+
+  // Not guaranteed to be unique, but will be the same for the same function.
+  // Use the JsValue strictEquals() method for true identity comparison.
+  uint hashCode() const;
+
+  operator JsObject() const {
+    return JsObject(inner);
+  }
+};
+
 // A persistent handle for a Js* type suitable for storage and GC visitable.
 //
 // For example,
@@ -604,27 +651,28 @@ struct JsValueWrapper {
   }
 
 #define V(Name)                                                                                    \
-  v8::Local<v8::Name> wrap(                                                                        \
-      v8::Local<v8::Context> context, kj::Maybe<v8::Local<v8::Object>> creator, Js##Name value) {  \
+  v8::Local<v8::Name> wrap(jsg::Lock& js, v8::Local<v8::Context> context,                          \
+      kj::Maybe<v8::Local<v8::Object>> creator, Js##Name value) {                                  \
     return value;                                                                                  \
   }                                                                                                \
-  v8::Local<v8::Name> wrap(v8::Local<v8::Context> context,                                         \
+  v8::Local<v8::Name> wrap(jsg::Lock& js, v8::Local<v8::Context> context,                          \
       kj::Maybe<v8::Local<v8::Object>> creator, JsRef<Js##Name> value) {                           \
-    return value.getHandle(Lock::from(context->GetIsolate()));                                     \
+    return value.getHandle(js);                                                                    \
   }
 
   TYPES_TO_WRAP(V)
 #undef V
 
   template <typename T, typename = kj::EnableIf<std::is_assignable_v<JsValue, T>>>
-  kj::Maybe<T> tryUnwrap(v8::Local<v8::Context> context,
+  kj::Maybe<T> tryUnwrap(Lock& js,
+      v8::Local<v8::Context> context,
       v8::Local<v8::Value> handle,
       T*,
       kj::Maybe<v8::Local<v8::Object>> parentObject) {
     if constexpr (kj::isSameType<T, JsString>()) {
       return T(check(handle->ToString(context)));
     } else if constexpr (kj::isSameType<T, JsBoolean>()) {
-      return T(handle->ToBoolean(context->GetIsolate()));
+      return T(handle->ToBoolean(js.v8Isolate));
     } else if constexpr (kj::isSameType<T, JsNumber>()) {
       return T(check(handle->ToNumber(context)));
     } else {
@@ -637,14 +685,14 @@ struct JsValueWrapper {
   }
 
   template <typename T, typename = kj::EnableIf<std::is_assignable_v<JsValue, T>>>
-  kj::Maybe<JsRef<T>> tryUnwrap(v8::Local<v8::Context> context,
+  kj::Maybe<JsRef<T>> tryUnwrap(Lock& js,
+      v8::Local<v8::Context> context,
       v8::Local<v8::Value> handle,
       JsRef<T>*,
       kj::Maybe<v8::Local<v8::Object>> parentObject) {
-    auto isolate = context->GetIsolate();
-    auto& js = Lock::from(isolate);
+    auto isolate = js.v8Isolate;
     KJ_IF_SOME(result,
-        TypeWrapper::from(isolate).tryUnwrap(context, handle, (T*)nullptr, parentObject)) {
+        TypeWrapper::from(isolate).tryUnwrap(js, context, handle, (T*)nullptr, parentObject)) {
       return JsRef(js, result);
     }
     return kj::none;

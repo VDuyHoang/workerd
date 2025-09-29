@@ -5,10 +5,13 @@
 #pragma once
 
 #include <workerd/io/outcome.capnp.h>
+#include <workerd/io/trace.h>
 #include <workerd/io/worker-interface.capnp.h>
+#include <workerd/util/http-util.h>
 
 #include <capnp/compat/http-over-capnp.h>
 #include <kj/compat/http.h>
+#include <kj/debug.h>
 
 namespace workerd {
 
@@ -24,11 +27,11 @@ class WorkerInterface: public kj::HttpService {
 
   // Make an HTTP request. (This method is inherited from HttpService, but re-declared here for
   // visibility.)
-  virtual kj::Promise<void> request(kj::HttpMethod method,
+  kj::Promise<void> request(kj::HttpMethod method,
       kj::StringPtr url,
       const kj::HttpHeaders& headers,
       kj::AsyncInputStream& requestBody,
-      kj::HttpService::Response& response) = 0;
+      kj::HttpService::Response& response) override = 0;
   // TODO(perf): Consider changing this to return Promise<DeferredProxy>. This would allow
   //   more resources to be dropped when merely proxying a request. However, it means we would no
   //   longer be implementing kj::HttpService. But maybe that doesn't matter too much in practice.
@@ -36,11 +39,11 @@ class WorkerInterface: public kj::HttpService {
   // This is the same as the inherited HttpService::connect(), but we override it to be
   // pure-virtual to force all subclasses of WorkerInterface to implement it explicitly rather
   // than get the default implementation which throws an unimplemented exception.
-  virtual kj::Promise<void> connect(kj::StringPtr host,
+  kj::Promise<void> connect(kj::StringPtr host,
       const kj::HttpHeaders& headers,
       kj::AsyncIoStream& connection,
       ConnectResponse& response,
-      kj::HttpConnectSettings settings) = 0;
+      kj::HttpConnectSettings settings) override = 0;
 
   // Hints that this worker will likely be invoked in the near future, so should be warmed up now.
   // This method should also call `prewarm()` on any subsequent pipeline stages that are expected
@@ -128,6 +131,12 @@ class WorkerInterface: public kj::HttpService {
     // what types.
     virtual uint16_t getType() = 0;
 
+    // Get event info for tracing.
+    // Return none if this event type doesn't need tracing.
+    virtual kj::Maybe<tracing::EventInfo> getEventInfo() const {
+      return kj::none;
+    }
+
     // If the CustomEvent fails before any of the other methods are called, this may be invoked
     // to report the failure reason.
     virtual void failed(const kj::Exception& e) {}
@@ -177,11 +186,13 @@ class LazyWorkerInterface final: public WorkerInterface {
       const kj::HttpHeaders& headers,
       kj::AsyncInputStream& requestBody,
       Response& response) override {
+    throwIfInvalidHeaderValue(headers);
     ensureResolve();
     KJ_IF_SOME(w, worker) {
       co_await w->request(method, url, headers, requestBody, response);
     } else {
       co_await KJ_ASSERT_NONNULL(promise);
+      throwIfInvalidHeaderValue(headers);
       co_await KJ_ASSERT_NONNULL(worker)->request(method, url, headers, requestBody, response);
     }
   }

@@ -8,6 +8,8 @@
 #include "filesystem.h"
 #include "hibernation-event-params.h"
 #include "http.h"
+#include "messagechannel.h"
+#include "performance.h"
 
 #include <workerd/io/io-timers.h>
 #include <workerd/jsg/jsg.h>
@@ -113,32 +115,6 @@ class Navigator: public jsg::Object {
   }
 };
 
-class Performance: public jsg::Object {
- public:
-  // We always return a time origin of 0, making performance.now() equivalent to Date.now(). There
-  // is no other appropriate time origin to use given that the Worker platform is intended to be
-  // treated like one big computer rather than many individual instances. In particular, if and
-  // when we start snapshotting applications after startup and then starting instances from that
-  // snapshot, what would the right time origin be? The time when the snapshot was created? This
-  // seems to leak implementation details in a weird way.
-  //
-  // Note that the purpose of `timeOrigin` is normally to allow `now()` to return a more-precise
-  // measurement. Measuring against a recent time allows the values returned by `now()` to be
-  // smaller in magnitude, which allows them to be more precise due to the nature of floating
-  // point numbers. In our case, though, we don't return precise measurements from this interface
-  // anyway, for Spectre reasons -- it returns the same as Date.now().
-  double getTimeOrigin() {
-    return 0.0;
-  }
-
-  double now();
-
-  JSG_RESOURCE_TYPE(Performance) {
-    JSG_READONLY_INSTANCE_PROPERTY(timeOrigin, getTimeOrigin);
-    JSG_METHOD(now);
-  }
-};
-
 // Exposed as a global to provide access to certain Cloudflare-specific
 // configuration details. This is not a standard API and great care should
 // be taken when deciding to expose new properties or methods here.
@@ -195,6 +171,15 @@ class WorkerGlobalScope: public EventTarget, public jsg::ContextGlobal {
 
   JSG_RESOURCE_TYPE(WorkerGlobalScope, CompatibilityFlags::Reader flags) {
     JSG_INHERIT(EventTarget);
+
+    // *** WARNING ***: *Every* new export here must be treated as a potentially
+    // breaking change. It doesn't matter if it's a new method, a new property,
+    // or a new nested type. Adding anything to the global scope risks breaking
+    // existing user code that is feature-sniffing or monkeypatching the global.
+    // *Always* add new exports behind a new compatibility flag! And when in
+    // doubt, don't add the new export on globalThis at all. The only things
+    // that should be exported on globalThis should be standardized web APIs or
+    // Node.js compat mode globals.
 
     JSG_NESTED_TYPE(EventTarget);
 
@@ -254,9 +239,7 @@ class ExecutionContext: public jsg::Object {
   JSG_RESOURCE_TYPE(ExecutionContext, CompatibilityFlags::Reader flags) {
     JSG_METHOD(waitUntil);
     JSG_METHOD(passThroughOnException);
-    if (flags.getWorkerdExperimental()) {
-      // TODO(soon): Remove experimental gate as soon as we've wired up the control plane so that
-      // this works in production.
+    if (flags.getEnableCtxExports()) {
       JSG_LAZY_INSTANCE_PROPERTY(exports, getExports);
     }
     JSG_LAZY_INSTANCE_PROPERTY(props, getProps);
@@ -273,6 +256,17 @@ class ExecutionContext: public jsg::Object {
       // * Enable the Durable Object version at the same time -- and make sure they're suitably
       //   consistent with each other.
       JSG_METHOD(abort);
+    }
+
+    if (flags.getEnableCtxExports()) {
+      JSG_TS_OVERRIDE(<Props = unknown> {
+        readonly props: Props;
+        readonly exports: Cloudflare.Exports;
+      });
+    } else {
+      JSG_TS_OVERRIDE(<Props = unknown> {
+        readonly props: Props;
+      });
     }
   }
 
@@ -379,7 +373,7 @@ struct ExportedHandler {
     type ExportedHandlerFetchHandler<Env = unknown, CfHostMetadata = unknown> = (request: Request<CfHostMetadata, IncomingRequestCfProperties<CfHostMetadata>>, env: Env, ctx: ExecutionContext) => Response | Promise<Response>;
     type ExportedHandlerTailHandler<Env = unknown> = (events: TraceItem[], env: Env, ctx: ExecutionContext) => void | Promise<void>;
     type ExportedHandlerTraceHandler<Env = unknown> = (traces: TraceItem[], env: Env, ctx: ExecutionContext) => void | Promise<void>;
-    type ExportedHandlerTailStreamHandler<Env = unknown> = (event : TailStream.TailEvent, env: Env, ctx: ExecutionContext) => TailStream.TailEventHandlerType | Promise<TailStream.TailEventHandlerType>;
+    type ExportedHandlerTailStreamHandler<Env = unknown> = (event : TailStream.TailEvent<TailStream.Onset>, env: Env, ctx: ExecutionContext) => TailStream.TailEventHandlerType | Promise<TailStream.TailEventHandlerType>;
     type ExportedHandlerScheduledHandler<Env = unknown> = (controller: ScheduledController, env: Env, ctx: ExecutionContext) => void | Promise<void>;
     type ExportedHandlerQueueHandler<Env = unknown, Message = unknown> = (batch: MessageBatch<Message>, env: Env, ctx: ExecutionContext) => void | Promise<void>;
     type ExportedHandlerTestHandler<Env = unknown> = (controller: TestController, env: Env, ctx: ExecutionContext) => void | Promise<void>;
@@ -590,7 +584,7 @@ class ServiceWorkerGlobalScope: public WorkerGlobalScope {
   }
 
   jsg::Ref<Performance> getPerformance(jsg::Lock& js) {
-    return js.alloc<Performance>();
+    return js.alloc<Performance>(Worker::Isolate::from(js).getLimitEnforcer());
   }
 
   jsg::Ref<Cloudflare> getCloudflare(jsg::Lock& js) {
@@ -611,7 +605,9 @@ class ServiceWorkerGlobalScope: public WorkerGlobalScope {
   // compat Buffer and process at the global scope in all modules as lazy instance
   // properties.
   jsg::JsValue getBuffer(jsg::Lock& js);
+  void setBuffer(jsg::Lock& js, jsg::JsValue newBuffer);
   jsg::JsValue getProcess(jsg::Lock& js);
+  void setProcess(jsg::Lock& js, jsg::JsValue newProcess);
   jsg::Ref<Immediate> setImmediate(jsg::Lock& js,
       jsg::Function<void(jsg::Arguments<jsg::Value>)> function,
       jsg::Arguments<jsg::Value> args);
@@ -619,6 +615,15 @@ class ServiceWorkerGlobalScope: public WorkerGlobalScope {
 
   JSG_RESOURCE_TYPE(ServiceWorkerGlobalScope, CompatibilityFlags::Reader flags) {
     JSG_INHERIT(WorkerGlobalScope);
+
+    // *** WARNING ***: *Every* new export here must be treated as a potentially
+    // breaking change. It doesn't matter if it's a new method, a new property,
+    // or a new nested type. Adding anything to the global scope risks breaking
+    // existing user code that is feature-sniffing or monkeypatching the global.
+    // *Always* add new exports behind a new compatibility flag! And when in
+    // doubt, don't add the new export on globalThis at all. The only things
+    // that should be exported on globalThis should be standardized web APIs or
+    // Node.js compat mode globals.
 
     JSG_NESTED_TYPE(DOMException);
     JSG_NESTED_TYPE(WorkerGlobalScope);
@@ -683,12 +688,16 @@ class ServiceWorkerGlobalScope: public WorkerGlobalScope {
     JSG_NESTED_TYPE(CountQueuingStrategy);
     JSG_NESTED_TYPE(ErrorEvent);
 
+    if (flags.getExposeGlobalMessageChannel()) {
+      JSG_NESTED_TYPE(MessageChannel);
+      JSG_NESTED_TYPE(MessagePort);
+    }
+
     if (flags.getWebFileSystem()) {
       JSG_NESTED_TYPE(FileSystemHandle);
       JSG_NESTED_TYPE(FileSystemFileHandle);
       JSG_NESTED_TYPE(FileSystemDirectoryHandle);
       JSG_NESTED_TYPE(FileSystemWritableFileStream);
-      JSG_NESTED_TYPE(FileSystemSyncAccessHandle);
       JSG_NESTED_TYPE(StorageManager);
     }
 
@@ -703,8 +712,8 @@ class ServiceWorkerGlobalScope: public WorkerGlobalScope {
     }
 
     if (flags.getNodeJsCompatV2()) {
-      JSG_LAZY_INSTANCE_PROPERTY(Buffer, getBuffer);
-      JSG_LAZY_INSTANCE_PROPERTY(process, getProcess);
+      JSG_INSTANCE_PROPERTY(Buffer, getBuffer, setBuffer);
+      JSG_INSTANCE_PROPERTY(process, getProcess, setProcess);
       JSG_LAZY_INSTANCE_PROPERTY(global, getSelf);
       JSG_METHOD(setImmediate);
       JSG_METHOD(clearImmediate);
@@ -763,6 +772,17 @@ class ServiceWorkerGlobalScope: public WorkerGlobalScope {
     JSG_NESTED_TYPE(FixedLengthStream);
     JSG_NESTED_TYPE(IdentityTransformStream);
     JSG_NESTED_TYPE(HTMLRewriter);
+
+    // Performance API
+    if (flags.getEnableGlobalPerformanceClasses()) {
+      JSG_NESTED_TYPE(Performance);
+      JSG_NESTED_TYPE(PerformanceEntry);
+      JSG_NESTED_TYPE(PerformanceMark);
+      JSG_NESTED_TYPE(PerformanceMeasure);
+      JSG_NESTED_TYPE(PerformanceResourceTiming);
+      JSG_NESTED_TYPE(PerformanceObserver);
+      JSG_NESTED_TYPE(PerformanceObserverEntryList);
+    }
 
     JSG_TS_ROOT();
     JSG_TS_DEFINE(
@@ -905,6 +925,8 @@ class ServiceWorkerGlobalScope: public WorkerGlobalScope {
 
  private:
   jsg::UnhandledRejectionHandler unhandledRejections;
+  kj::Maybe<jsg::JsRef<jsg::JsValue>> processValue;
+  kj::Maybe<jsg::JsRef<jsg::JsValue>> bufferValue;
 
   // Global properties such as scheduler, crypto, caches, self, and origin should
   // be monkeypatchable / mutable at the global scope.
@@ -914,6 +936,6 @@ class ServiceWorkerGlobalScope: public WorkerGlobalScope {
   api::WorkerGlobalScope, api::ServiceWorkerGlobalScope, api::TestController,                      \
       api::ExecutionContext, api::ExportedHandler,                                                 \
       api::ServiceWorkerGlobalScope::StructuredCloneOptions, api::PromiseRejectionEvent,           \
-      api::Navigator, api::Performance, api::AlarmInvocationInfo, api::Immediate, api::Cloudflare
+      api::Navigator, api::AlarmInvocationInfo, api::Immediate, api::Cloudflare
 // The list of global-scope.h types that are added to worker.c++'s JSG_DECLARE_ISOLATE_TYPE
 }  // namespace workerd::api

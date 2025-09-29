@@ -51,12 +51,12 @@ class FastMethodContext: public jsg::Object, public jsg::ContextGlobal {
 
   // When arbitrary type unwrapping is supported, keep this test as it is.
   int32_t processObject(v8::Local<v8::Object> obj) {
-    auto isolate = v8::Isolate::GetCurrent();
-    auto context = isolate->GetCurrentContext();
-    auto testKey = v8::String::NewFromUtf8(isolate, "test").ToLocalChecked();
+    auto& js = jsg::Lock::current();
+    auto context = js.v8Context();
+    auto testKey = v8::String::NewFromUtf8(js.v8Isolate, "test").ToLocalChecked();
     v8::Local<v8::Value> value;
     if (obj->Get(context, testKey).ToLocal(&value)) {
-      v8::String::Utf8Value type(isolate, value->TypeOf(isolate));
+      v8::String::Utf8Value type(js.v8Isolate, value->TypeOf(js.v8Isolate));
       KJ_ASSERT(value->IsInt32(), "Received ", *type);
       return value.As<v8::Int32>()->Value();
     }
@@ -128,8 +128,8 @@ class FastMethodContext: public jsg::Object, public jsg::ContextGlobal {
     }
   }
 
-  jsg::Ref<StaticMethodContainer> newContainer() {
-    return jsg::alloc<StaticMethodContainer>();
+  jsg::Ref<StaticMethodContainer> newContainer(jsg::Lock& js) {
+    return js.alloc<StaticMethodContainer>();
   }
 
   JSG_RESOURCE_TYPE(FastMethodContext) {
@@ -301,6 +301,7 @@ KJ_TEST("isFastApiCompatible Detection") {
   using MaybeVoidMethod = kj::Maybe<void> (FastMethodContext::*)();
   using StaticMethodContainerMethod = void(StaticMethodContainer);
   using KjPromiseMethod = void (FastMethodContext::*)(kj::Promise<void>);
+  using JsgPromiseMethod = void (FastMethodContext::*)(jsg::Promise<void>);
 
   // Static assertions for compatible method types
   // --------------------------------------------
@@ -359,7 +360,8 @@ KJ_TEST("isFastApiCompatible Detection") {
   static_assert(!isFastApiCompatible<MaybeVoidMethod>,
       "Methods returning Maybe<void> should not be fast-method compatible");
   static_assert(isFastApiCompatible<StaticMethodContainerMethod>, "This should be compatible");
-  static_assert(!isFastApiCompatible<KjPromiseMethod>, "Promise is not compatible");
+  static_assert(!isFastApiCompatible<KjPromiseMethod>, "kj::Promise is not compatible");
+  static_assert(!isFastApiCompatible<JsgPromiseMethod>, "jsg::Promise is not compatible");
 }
 
 }  // namespace

@@ -1,4 +1,11 @@
 declare namespace MetadataReader {
+  export interface CompatibilityFlags {
+    python_workflows?: boolean;
+    python_no_global_handlers?: boolean;
+    python_workers_force_new_vendor_path?: boolean;
+    python_dedicated_snapshot?: boolean;
+  }
+
   const isWorkerd: () => boolean;
   const isTracing: () => boolean;
   const shouldSnapshotToDisk: () => boolean;
@@ -20,8 +27,7 @@ declare namespace MetadataReader {
   const getPackagesLock: () => string;
   const read: (index: number, position: number, buffer: Uint8Array) => number;
   const getTransitiveRequirements: () => Set<string>;
-  const getDurableObjectClasses: () => string[] | null;
-  const getEntrypointClasses: () => string[] | null;
+  const getCompatibilityFlags: () => CompatibilityFlags;
   const constructor: {
     getBaselineSnapshotImports(): string[];
   };
