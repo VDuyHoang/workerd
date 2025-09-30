@@ -1,0 +1,57 @@
+name: Build binary for EL9
+on:
+  push:
+    branches:
+      - el9
+      - el9-dev
+jobs:
+  binary_rpm_for_EL9:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Cache bazel build
+      uses: actions/cache@v4
+      with:
+        path:
+          ~/.bazel
+        key:
+          bazel-${{hashFiles('.bazelversion')}}
+    - name: Install patch utility and apply patch
+      # Install patch utility and apply the patch for RHEL9 compatibility
+      run: |
+        sudo apt-get install -y patch
+        patch -p1 < ./el9/0001-bazel-build-for-rocky-linux-9.patch
+    - name: docker build
+      run: docker build --build-arg BAZEL_VERSION=$(cat .bazelversion) --build-arg UID=$(id -u) -t rhel9bin -f ./el9/Dockerfile .
+    - name: Check bazel cache
+      # Check if bazel cache exists, if not create it
+      run: ls -la ~/.bazel || mkdir -p ~/.bazel
+    - name: Create bazel-bin directory
+      # Create bazel-bin directory to store the build output
+      run: mkdir -p output
+      # when mounting with output directory, it failed
+      # cannot create symbolic link bazel-bin -> /home/joe/.cache/bazel/_bazel_joe/932cf584c2bb75ae1cd19a9e7d27aa83/execroot/_main/bazel-out/k8-opt/bin:  /home/joe/workerd/bazel-bin (File exists)
+    - name: docker run with bazel cache
+      # Run the docker container with the bazel cache mounted
+      run: docker run --name rhel9bin -v ./output:/home/joe/output -v ~/.bazel:/home/joe/.cache/bazel/_bazel_joe rhel9bin
+    - name: Get workerd version
+      id: get_version
+      run: |
+        VERSION=$(output/workerd --version | awk -F " " '{ print $2 }')
+        echo "workerd version: $VERSION"
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+    - name: Upload binary
+      uses: actions/upload-artifact@v4
+      with:
+        path:
+          output/workerd
+        name:
+          workerd-linux-x86_64-el9
+    - name: Upload rpm
+      uses: actions/upload-artifact@v4
+      with:
+        path:
+          output/workerd*.rpm
+        name:
+          workerd-rpm-el9
