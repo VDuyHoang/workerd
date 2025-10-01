@@ -1,11 +1,11 @@
-name: Build binary for EL9
+name: Build binary and rpm for EL9
 on:
   push:
     branches:
       - el9
       - el9-dev
 jobs:
-  binary_rpm_for_EL9:
+  release_binary_and_rpm_el9:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -39,8 +39,9 @@ jobs:
       id: get_version
       run: |
         VERSION=$(output/workerd --version | awk -F " " '{ print $2 }')
+        VERSION=${VERSION//-/}  # Remove any suffix after '-'
         echo "workerd version: $VERSION"
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "VERSION=1.$VERSION.0" >> $GITHUB_ENV
     - name: Upload binary
       uses: actions/upload-artifact@v4
       with:
@@ -55,3 +56,31 @@ jobs:
           output/workerd*.rpm
         name:
           workerd-rpm-el9
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.VERSION }}.el9.x86-64
+        release_name: Release ${{ env.VERSION }}.el9.x86-64
+        draft: false
+        prerelease: false
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./output/workerd
+        asset_name: workerd
+        asset_content_type: application/octet-stream
+    - name: Upload RPM Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./output/workerd-${{ env.VERSION }}-1.el9.x86_64.rpm
+        asset_name: workerd-${{ env.VERSION }}.el9.x86-64.rpm
+        asset_content_type: application/x-rpm
