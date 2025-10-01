@@ -1,11 +1,12 @@
 FROM rockylinux/rockylinux:9 AS builder
 ARG BAZEL_VERSION=8.3.1
 ARG UID=1000
-RUN yum install -y git patch tcl epel-release rpm-build && \
+RUN yum install -y git patch tcl epel-release rpm-build wget && \
   dnf copr -y enable @fedora-llvm-team/llvm-snapshots centos-stream-9-x86_64 && \
-  dnf copr -y enable duyhoang/el9 && \
-  yum -y install clang19 lld19 clang19-devel bazel-${BAZEL_VERSION}
-RUN useradd -u ${UID} -m joe
+  yum -y install clang19 lld19 clang19-devel && \
+  wget https://releases.bazel.build/${BAZEL_VERSION}/release/bazel-${BAZEL_VERSION}-linux-x86_64 -O /usr/bin/bazel && \
+  chmod +x /usr/bin/bazel && \
+  useradd -u ${UID} -m joe
 RUN mkdir -p /home/joe/workerd
 WORKDIR /home/joe/workerd
 COPY . .
@@ -15,9 +16,3 @@ RUN chown -R joe:joe /home/joe/workerd && chmod +x el9/entrypoint.sh
 USER joe
 RUN git config core.hooksPath githooks
 ENTRYPOINT ["el9/entrypoint.sh"]
-# RUN bazel build --config=release_linux //src/workerd/server:workerd
-
-# FROM scratch as artifact
-# COPY --from=builder /home/joe/workerd/bazel-bin/src/workerd/server/workerd /workerd-linux-x86_64
-#fedora-llvm-team/llvm-snapshots no more rhel9
-# bazel-8.2.1
