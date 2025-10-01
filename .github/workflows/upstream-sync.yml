@@ -1,0 +1,27 @@
+name: sync latest tag from upstream
+on:
+  schedule:
+    - cron: '0 1 * * *'  # Runs at 01:00 every Sunday
+#  workflow_dispatch:
+# git merge $LATEST_TAG
+# git push
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for all tags and branches
+          token: ${{ secrets.PAT }}
+      - name: Set up Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+      - name: Sync with latest upstream repository
+        run: |
+          git remote add upstream https://github.com/cloudflare/workerd.git
+          git fetch upstream --tags -f
+          LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
+          git merge "$LATEST_TAG"
+          git push origin master
