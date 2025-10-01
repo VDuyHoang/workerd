@@ -41,7 +41,7 @@ jobs:
         VERSION=$(output/workerd --version | awk -F " " '{ print $2 }')
         VERSION=${VERSION//-/}  # Remove any suffix after '-'
         echo "workerd version: $VERSION"
-        echo "VERSION=1.$VERSION" >> $GITHUB_ENV
+        echo "VERSION=1.$VERSION.0" >> $GITHUB_ENV
     - name: Upload binary
       uses: actions/upload-artifact@v4
       with:
@@ -73,7 +73,7 @@ jobs:
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ./output/workerd
-        asset_name: workerd-el9-x86_64-${{ env.VERSION }}
+        asset_name: workerd
         asset_content_type: application/octet-stream
     - name: Upload RPM Asset
       uses: actions/upload-release-asset@v1
@@ -81,6 +81,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./output/workerd*.rpm
-        asset_name: workerd-el9-${{ env.VERSION }}.rpm
+        asset_path: ./output/workerd-${{ env.VERSION }}-1.el9.x86_64.rpm
+        asset_name: workerd-${{ env.VERSION }}.el9.x86-64.rpm
         asset_content_type: application/x-rpm
