@@ -1,10 +1,8 @@
 name: sync latest tag from upstream
 on:
   schedule:
-    - cron: '0 1 * * *'  # Runs at 01:00 every Sunday
+    - cron: '22 1 * * *'  # Runs at 01:00 everyday
 #  workflow_dispatch:
-# git merge $LATEST_TAG
-# git push
 jobs:
   sync:
     runs-on: ubuntu-latest
