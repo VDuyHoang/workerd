@@ -22,4 +22,4 @@ jobs:
           git fetch upstream --tags -f
           LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
           git merge "$LATEST_TAG"
-          git push origin master
+          git push origin el9
