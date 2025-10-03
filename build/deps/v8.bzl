@@ -35,6 +35,7 @@ PATCHES = [
     "0027-Implement-additional-Exception-construction-methods.patch",
     "0028-Export-icudata-file-to-facilitate-embedding-it.patch",
     "0029-IsGraphAsync-module-cast-check.patch",
+    "0030-bind-icu-to-googlesource.patch",
 ]
 
 # V8 and its dependencies
@@ -67,18 +68,4 @@ def deps_v8():
         patch_cmds = ["find source -name BUILD.bazel | xargs rm"],
         patch_cmds_win = ["Get-ChildItem -Path source -File -Include BUILD.bazel -Recurse | Remove-Item"],
         remote = "https://chromium.googlesource.com/chromium/deps/icu.git",
-    )
-
-    http_archive(
-        name = "perfetto",
-        integrity = "sha256-T5F4h9xXdYfTGMa+AXmewHIkS1cgxu5ierfyJMOwqJA=",
-        strip_prefix = "perfetto-51.2",
-        url = "https://github.com/google/perfetto/archive/refs/tags/v51.2.tar.gz",
-    )
-
-    # For use with perfetto
-    native.new_local_repository(
-        name = "perfetto_cfg",
-        build_file_content = "",
-        path = "build/perfetto",
     )
