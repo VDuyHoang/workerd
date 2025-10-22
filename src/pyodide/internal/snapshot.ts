@@ -18,7 +18,7 @@ import {
 } from 'pyodide-internal:metadata';
 import {
   invalidateCaches,
-  PythonRuntimeError,
+  PythonWorkersInternalError,
   PythonUserError,
   simpleRunPython,
 } from 'pyodide-internal:util';
@@ -228,12 +228,22 @@ function getMemoryPatched(
   const libName = libPath.split('/').at(-1)!;
   // 1. Is it loaded in the snapshot? Replay the memory base.
   {
-    const { soMemoryBases } = LOADED_SNAPSHOT_META ?? {};
+    const { soMemoryBases, soTableBases } = LOADED_SNAPSHOT_META ?? {};
     // If we loaded this library before taking the snapshot, we already allocated the memory and the
     // allocator remembers because its state is in the linear memory. We just have to look it up.
-    const base = soMemoryBases?.[libPath] ?? soMemoryBases?.[libName];
-    if (base) {
-      return base;
+    const tableBase = Module.wasmTable.length;
+    const expectedTableBase =
+      soTableBases?.[libPath] ?? soTableBases?.[libName];
+    if (expectedTableBase && tableBase !== expectedTableBase) {
+      // If this happens, we will segfault if we ever try to use this dynamic library.
+      // Save ourselves some debugging pain by crashing early.
+      throw new PythonWorkersInternalError(
+        `Error loading ${libName}: Expected table base ${expectedTableBase} but got table base ${tableBase}`
+      );
+    }
+    const memoryBase = soMemoryBases?.[libPath] ?? soMemoryBases?.[libName];
+    if (memoryBase) {
+      return memoryBase;
     }
   }
   // 2. It's not loaded in the snapshot. Record
@@ -292,7 +302,7 @@ function loadDynlibFromVendor(
   const path = soFile.slice(3).join('/');
   const index = userBundleNames.indexOf(path);
   if (index == -1) {
-    throw new PythonRuntimeError(
+    throw new PythonWorkersInternalError(
       `Could not find ${path} in user bundle, which is required by the snapshot.`
     );
   }
@@ -348,7 +358,7 @@ function preloadDynamicLibsMain(Module: Module, loadOrder: string[]): void {
       base = dynlibPath;
     }
 
-    const pathSplit = path.split('/');
+    const pathSplit = Module.PATH.normalizeArray(path.split('/'), true);
     if (pathSplit[0] == '') {
       // This is a file path beginning with `/`, like /session/metadata/vendor/pkg/lib.so. So we
       // are loading the vendored package's dynlibs here.
@@ -608,14 +618,14 @@ function decodeSnapshot(
     return undefined;
   }
   if (reader.getMemorySnapshotSize() === 0) {
-    throw new PythonRuntimeError(
+    throw new PythonWorkersInternalError(
       `SnapshotReader returned memory snapshot size of 0`
     );
   }
   const header = new Uint32Array(4);
   reader.readMemorySnapshot(0, header);
   if (header[0] !== SNAPSHOT_MAGIC) {
-    throw new PythonRuntimeError(
+    throw new PythonWorkersInternalError(
       `Invalid magic number ${header[0]}, expected ${SNAPSHOT_MAGIC}`
     );
   }
@@ -676,7 +686,7 @@ function checkSnapshotType(snapshotType: string): void {
     snapshotType === 'dedicated' &&
     !IS_DEDICATED_SNAPSHOT_ENABLED
   ) {
-    throw new PythonRuntimeError(
+    throw new PythonWorkersInternalError(
       'Received dedicated snapshot but compat flag for dedicated snapshots is not enabled'
     );
   }
@@ -686,7 +696,7 @@ function checkSnapshotType(snapshotType: string): void {
     snapshotType !== 'dedicated' &&
     IS_DEDICATED_SNAPSHOT_ENABLED
   ) {
-    throw new PythonRuntimeError(
+    throw new PythonWorkersInternalError(
       'Received non-dedicated snapshot but compat flag for dedicated snapshots is enabled'
     );
   }
@@ -695,7 +705,7 @@ function checkSnapshotType(snapshotType: string): void {
   // should verify that the snapshot in the bundle is a dedicated snapshot. If it is not
   // we should fail with an error.
   if (snapshotType !== 'dedicated' && IS_SECOND_VALIDATION_PHASE) {
-    throw new PythonRuntimeError(
+    throw new PythonWorkersInternalError(
       'The second validation phase should receive a dedicated snapshot, got ' +
         snapshotType
     );
@@ -756,7 +766,7 @@ function collectSnapshot(
     );
     DiskCache.put('snapshot.bin', snapshot);
   } else {
-    throw new PythonRuntimeError(
+    throw new PythonWorkersInternalError(
       "Attempted to collect snapshot outside of context where it's supported."
     );
   }
@@ -781,13 +791,13 @@ export function maybeCollectDedicatedSnapshot(
   if (Module.API.version == '0.26.0a2') {
     // 0.26.0a2 does not support serialisation of the hiwire state, so it cannot support dedicated
     // snapshots.
-    throw new PythonRuntimeError(
+    throw new PythonWorkersInternalError(
       'Dedicated snapshot is not supported for Python runtime version 0.26.0a2'
     );
   }
 
   if (!pyodide_entrypoint_helper) {
-    throw new PythonRuntimeError(
+    throw new PythonWorkersInternalError(
       'pyodide_entrypoint_helper is required for dedicated snapshot'
     );
   }
@@ -830,7 +840,7 @@ export function finalizeBootstrap(
     if ('pyodide_entrypoint_helper' in obj) {
       return pyodide_entrypoint_helper;
     }
-    throw new PythonRuntimeError(`Can't deserialize ${obj}`);
+    throw new PythonWorkersInternalError(`Can't deserialize ${obj}`);
   };
 
   Module.API.config._makeSnapshot =
