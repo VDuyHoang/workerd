@@ -1542,10 +1542,7 @@ declare class TextEncoder {
    *
    * [MDN Reference](https://developer.mozilla.org/docs/Web/API/TextEncoder/encodeInto)
    */
-  encodeInto(
-    input: string,
-    buffer: ArrayBuffer | ArrayBufferView,
-  ): TextEncoderEncodeIntoResult;
+  encodeInto(input: string, buffer: Uint8Array): TextEncoderEncodeIntoResult;
   get encoding(): string;
 }
 interface TextDecoderConstructorOptions {
@@ -3731,6 +3728,7 @@ interface Container {
   destroy(error?: any): Promise<void>;
   signal(signo: number): void;
   getTcpPort(port: number): Fetcher;
+  setInactivityTimeout(durationMs: number | bigint): Promise<void>;
 }
 interface ContainerStartupOptions {
   entrypoint?: string[];
@@ -7633,6 +7631,10 @@ type AutoRagSearchRequest = {
   ranking_options?: {
     ranker?: string;
     score_threshold?: number;
+  };
+  reranking?: {
+    enabled?: boolean;
+    model?: string;
   };
   rewrite_query?: boolean;
 };
