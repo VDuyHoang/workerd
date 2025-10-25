@@ -1126,7 +1126,7 @@ class USVString: public kj::String {
   }
 
  private:
-  // This is a seperate method to avoid including simdutf8 in the header file.
+  // This is a seperate method to avoid including simdutf in the header file.
   bool isValidUtf8() const;
 };
 
@@ -3003,6 +3003,7 @@ inline Value SelfRef::asValue(Lock& js) const {
 
 // clang-format off
 // These includes are needed for the JSG type glue macros to work.
+#include "promise.h"
 #include "modules.h"
 #include "resource.h"
 #include "jsvalue.h"
