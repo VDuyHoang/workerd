@@ -373,6 +373,24 @@ kj_test(
 )
 
 kj_test(
+    src = "streams/writable-sink-test.c++",
+    deps = [
+        "//src/workerd/io",
+        "//src/workerd/jsg",
+        "//src/workerd/tests:test-fixture",
+    ],
+)
+
+kj_test(
+    src = "streams/readable-source-test.c++",
+    deps = [
+        "//src/workerd/io",
+        "//src/workerd/jsg",
+        "//src/workerd/tests:test-fixture",
+    ],
+)
+
+kj_test(
     src = "streams/writable-sink-adapter-test.c++",
     deps = [
         "//src/workerd/io",
@@ -498,7 +516,11 @@ wd_test(
 wd_test(
     src = "sync-kv-test.wd-test",
     args = ["--experimental"],
-    data = ["sync-kv-test.js"],
+    data = [
+        "sync-kv-instrumentation-test.js",
+        "sync-kv-test.js",
+        "tests/instrumentation-tail-worker.js",
+    ],
 )
 
 wd_test(
