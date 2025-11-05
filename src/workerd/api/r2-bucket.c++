@@ -546,7 +546,6 @@ R2Bucket::get(jsg::Lock& js,
       addR2ResponseSpanTags(traceContext, r2Result);
       if (r2Result.preconditionFailed()) {
         result = KJ_ASSERT_NONNULL(parseObjectMetadata<HeadResult>(js, "get", r2Result, errorType));
-        traceContext.userSpan.setTag("error.type"_kjc, kj::str("precondition-failed"_kjc));
       } else {
         jsg::Ref<ReadableStream> body = nullptr;
 
@@ -857,7 +856,6 @@ jsg::Promise<kj::Maybe<jsg::Ref<R2Bucket::HeadResult>>> R2Bucket::put(jsg::Lock&
             jsg::Lock& js, R2Result r2Result) mutable -> kj::Maybe<jsg::Ref<HeadResult>> {
       addR2ResponseSpanTags(traceContext, r2Result);
       if (r2Result.preconditionFailed()) {
-        traceContext.userSpan.setTag("error.type"_kjc, kj::str("precondition-failed"_kjc));
         return kj::none;
       } else {
         auto result = parseObjectMetadata<HeadResult>(js, "put", r2Result, errorType);
@@ -1209,10 +1207,10 @@ jsg::Promise<R2Bucket::ListResult> R2Bucket::list(jsg::Lock& js,
           KJ_MAP(e, responseBuilder.getDelimitedPrefixes()) { return kj::str(e); };
       }
 
-      traceContext.userSpan.setTag(
-          "cloudflare.r2.response.returned_objects"_kjc, int64_t(result.objects.size()));
+      traceContext.userSpan.setTag("cloudflare.r2.response.returned_objects"_kjc,
+          static_cast<int64_t>(result.objects.size()));
       traceContext.userSpan.setTag("cloudflare.r2.response.delimited_prefixes"_kjc,
-          int64_t(result.delimitedPrefixes.size()));
+          static_cast<int64_t>(result.delimitedPrefixes.size()));
       traceContext.userSpan.setTag("cloudflare.r2.response.truncated"_kjc, result.truncated);
       KJ_IF_SOME(cursor, result.cursor) {
         traceContext.userSpan.setTag("cloudflare.r2.response.cursor"_kjc, kj::str(cursor));
