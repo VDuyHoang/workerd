@@ -1198,12 +1198,12 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
 
   fastJsgStruct @141 :Bool
     $compatEnableFlag("enable_fast_jsg_struct")
-    $compatDisableFlag("disable_fast_jsg_struct");
+    $compatDisableFlag("disable_fast_jsg_struct")
+    $compatEnableDate("2025-12-03");
   # Enables the fast jsg::Struct optimization. With this enabled, JSG_STRUCTS
   # will use a more efficient creation pattern that reduces construction time.
   # However, optional fields will be explicitly set to undefined rather than
   # being omitted, which is an observable behavior change.
-  # TODO(soon): Once proven in production, add a default on date
 
   cacheReload @142 :Bool
       $compatEnableFlag("cache_reload_enabled")
@@ -1221,4 +1221,10 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
     $compatDisableFlag("disable_python_check_rng_state")
     $experimental;
 
+  shouldSetImmutablePrototype @145 :Bool
+    $compatEnableFlag("immutable_api_prototypes")
+    $compatDisableFlag("mutable_api_prototypes");
+  # When set, tells JSG to make the prototype of all jsg::Objects immutable.
+  # TODO(soon): Add the default on date once the flag is verified to be
+  # generally safe.
 }
