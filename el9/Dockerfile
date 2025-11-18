@@ -4,7 +4,7 @@ ARG UID=1000
 RUN yum install -y git patch tcl epel-release rpm-build wget && \
   dnf copr -y enable @fedora-llvm-team/llvm-snapshots centos-stream-9-x86_64 && \
   yum -y install clang19 lld19 clang19-devel && \
-  wget https://releases.bazel.build/${BAZEL_VERSION}/release/bazel-${BAZEL_VERSION}-linux-x86_64 -O /usr/bin/bazel && \
+  wget https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-linux-x86_64 -O /usr/bin/bazel && \
   chmod +x /usr/bin/bazel && \
   useradd -u ${UID} -m joe
 RUN mkdir -p /home/joe/workerd
