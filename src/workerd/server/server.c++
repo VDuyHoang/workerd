@@ -21,6 +21,7 @@
 #include <workerd/io/container.capnp.h>
 #include <workerd/io/hibernation-manager.h>
 #include <workerd/io/io-context.h>
+#include <workerd/io/limit-enforcer.h>
 #include <workerd/io/request-tracker.h>
 #include <workerd/io/trace-stream.h>
 #include <workerd/io/worker-entrypoint.h>
@@ -3372,6 +3373,7 @@ class Server::WorkerService final: public Service,
   kj::Promise<void> onLimitsExceeded() override {
     return kj::NEVER_DONE;
   }
+  void setCpuLimitNearlyExceededCallback(kj::Function<void(void)> cb) override {}
   void requireLimitsNotExceeded() override {}
   void reportMetrics(RequestObserver& requestMetrics) override {}
   kj::Duration consumeTimeElapsedForPeriodicLogging() override {
@@ -5046,7 +5048,7 @@ class Server::HttpListener final: public kj::Refcounted {
         kj::HttpService::Response& response) override {
       TRACE_EVENT("workerd", "Connection:request()");
       IoChannelFactory::SubrequestMetadata metadata;
-      metadata.cfBlobJson = cfBlobJson.map([](kj::StringPtr s) { return kj::str(s); });
+      metadata.cfBlobJson = mapCopyString(cfBlobJson);
 
       Response* wrappedResponse = &response;
       kj::Own<ResponseWrapper> ownResponse;
