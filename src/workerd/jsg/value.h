@@ -24,7 +24,6 @@ namespace workerd::jsg {
 
 // =======================================================================================
 // Primitives (numbers, booleans)
-
 // TypeWrapper mixin for numbers and booleans.
 //
 // This wrapper has extra wrap() overloads that take an isolate instead of a
@@ -375,7 +374,7 @@ class PrimitiveWrapper {
     return "boolean";
   }
 
-  template <typename T, typename = kj::EnableIf<kj::isSameType<T, bool>()>>
+  template <StrictlyBool T>
   v8::Local<v8::Boolean> wrap(
       Lock& js, v8::Local<v8::Context> context, kj::Maybe<v8::Local<v8::Object>> creator, T value) {
     // The template is needed to prevent this overload from being chosen for arbitrary types that
@@ -383,7 +382,7 @@ class PrimitiveWrapper {
     return wrap(js.v8Isolate, creator, value);
   }
 
-  template <typename T, typename = kj::EnableIf<kj::isSameType<T, bool>()>>
+  template <StrictlyBool T>
   v8::Local<v8::Boolean> wrap(
       v8::Isolate* isolate, kj::Maybe<v8::Local<v8::Object>> creator, T value) {
     // The template is needed to prevent this overload from being chosen for arbitrary types that
@@ -537,16 +536,6 @@ class StringWrapper {
 
 // =======================================================================================
 // Optional (value or undefined) and Maybe (value or null)
-
-template <typename... T>
-constexpr bool isUnionType(kj::OneOf<T...>*) {
-  return true;
-}
-
-template <typename T>
-constexpr bool isUnionType(T*) {
-  return false;
-}
 
 // TypeWrapper mixin for optionals.
 template <typename TypeWrapper>
@@ -842,7 +831,6 @@ class OneOfWrapper {
 template <typename TypeWrapper>
 class ArrayWrapper {
  public:
-  static auto constexpr MAX_STACK = 64;
   template <typename U>
   static constexpr const char* getName(kj::Array<U>*) {
     return "Array";
@@ -917,7 +905,6 @@ class ArrayWrapper {
 template <typename TypeWrapper>
 class SetWrapper {
  public:
-  static auto constexpr MAX_STACK = 64;
   template <typename U>
   static constexpr const char* getName(kj::HashSet<U>*) {
     return "Set";
