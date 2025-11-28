@@ -19,7 +19,6 @@
 #include <workerd/jsg/value.h>
 #include <workerd/jsg/web-idl.h>
 #include <workerd/jsg/wrappable.h>
-#include <workerd/util/autogate.h>
 
 #include <v8-wasm.h>
 
@@ -386,7 +385,7 @@ template <typename Self, typename... T>
 class TypeWrapper: public DynamicResourceTypeMap<Self>,
                    public TypeWrapperBase<Self, T>...,
                    public PrimitiveWrapper,
-                   public NameWrapper<Self>,
+                   public NameWrapper,
                    public StringWrapper,
                    public OptionalWrapper<Self>,
                    public LenientOptionalWrapper<Self>,
@@ -396,33 +395,31 @@ class TypeWrapper: public DynamicResourceTypeMap<Self>,
                    public SetWrapper<Self>,
                    public SequenceWrapper<Self>,
                    public GeneratorWrapper<Self>,
-                   public ArrayBufferWrapper<Self>,
+                   public ArrayBufferWrapper,
                    public DictWrapper<Self>,
-                   public DateWrapper<Self>,
-                   public BufferSourceWrapper<Self>,
+                   public DateWrapper,
+                   public BufferSourceWrapper,
                    public FunctionWrapper<Self>,
                    public PromiseWrapper<Self>,
                    public NonCoercibleWrapper<Self>,
                    public MemoizedIdentityWrapper<Self>,
                    public IdentifiedWrapper<Self>,
-                   public SelfRefWrapper<Self>,
+                   public SelfRefWrapper,
                    public ExceptionWrapper<Self>,
                    public ObjectWrapper<Self>,
                    public V8HandleWrapper,
                    public UnimplementedWrapper,
-                   public JsValueWrapper<Self> {
+                   public JsValueWrapper {
   // TODO(soon): Should the TypeWrapper object be stored on the isolate rather than the context?
-  bool fastApiEnabled = false;
-
  public:
   template <typename MetaConfiguration>
   TypeWrapper(v8::Isolate* isolate, MetaConfiguration&& configuration)
       : TypeWrapperBase<Self, T>(configuration)...,
         MaybeWrapper<Self>(configuration),
         GeneratorWrapper<Self>(configuration),
-        PromiseWrapper<Self>(configuration) {
+        PromiseWrapper<Self>(configuration),
+        config(getConfig(configuration)) {
     isolate->SetData(SET_DATA_TYPE_WRAPPER, this);
-    fastApiEnabled = util::Autogate::isEnabled(util::AutogateKey::V8_FAST_API);
   }
   KJ_DISALLOW_COPY_AND_MOVE(TypeWrapper);
 
@@ -435,7 +432,7 @@ class TypeWrapper: public DynamicResourceTypeMap<Self>,
   }
 
   bool isFastApiEnabled() const {
-    return fastApiEnabled;
+    return config.fastApiEnabled;
   }
 
   using TypeWrapperBase<Self, T>::getName...;
@@ -451,7 +448,7 @@ class TypeWrapper: public DynamicResourceTypeMap<Self>,
   using Name::tryUnwrap
 
   USING_WRAPPER(PrimitiveWrapper);
-  USING_WRAPPER(NameWrapper<Self>);
+  USING_WRAPPER(NameWrapper);
   USING_WRAPPER(StringWrapper);
   USING_WRAPPER(OptionalWrapper<Self>);
   USING_WRAPPER(LenientOptionalWrapper<Self>);
@@ -461,21 +458,21 @@ class TypeWrapper: public DynamicResourceTypeMap<Self>,
   USING_WRAPPER(SetWrapper<Self>);
   USING_WRAPPER(SequenceWrapper<Self>);
   USING_WRAPPER(GeneratorWrapper<Self>);
-  USING_WRAPPER(ArrayBufferWrapper<Self>);
+  USING_WRAPPER(ArrayBufferWrapper);
   USING_WRAPPER(DictWrapper<Self>);
-  USING_WRAPPER(DateWrapper<Self>);
-  USING_WRAPPER(BufferSourceWrapper<Self>);
+  USING_WRAPPER(DateWrapper);
+  USING_WRAPPER(BufferSourceWrapper);
   USING_WRAPPER(FunctionWrapper<Self>);
   USING_WRAPPER(PromiseWrapper<Self>);
   USING_WRAPPER(NonCoercibleWrapper<Self>);
   USING_WRAPPER(MemoizedIdentityWrapper<Self>);
   USING_WRAPPER(IdentifiedWrapper<Self>);
-  USING_WRAPPER(SelfRefWrapper<Self>);
+  USING_WRAPPER(SelfRefWrapper);
   USING_WRAPPER(ExceptionWrapper<Self>);
   USING_WRAPPER(ObjectWrapper<Self>);
   USING_WRAPPER(V8HandleWrapper);
   USING_WRAPPER(UnimplementedWrapper);
-  USING_WRAPPER(JsValueWrapper<Self>);
+  USING_WRAPPER(JsValueWrapper);
 #undef USING_WRAPPER
 
   template <typename U>
@@ -600,6 +597,9 @@ class TypeWrapper: public DynamicResourceTypeMap<Self>,
   void initReflection(Holder* holder, PropertyReflection<U>&... reflections) {
     (initReflection(holder, reflections), ...);
   }
+
+ private:
+  const JsgConfig config;
 };
 
 template <typename Self, typename... Types>
