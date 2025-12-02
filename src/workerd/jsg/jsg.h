@@ -1083,34 +1083,6 @@ void jsgAddToStructNames(auto& names) {
   if constexpr (isUsableStructField<T>) names.add(exportedName);
 }
 
-// TODO(cleanup): This class was meant to be a ByteString (characters in the range [0,255]), but
-//   its only use so far is in api::Headers. But making the Headers class use ByteStrings turned
-//   out to be unwise. Nevertheless, it is still useful to keep around in order to provide
-//   feedback to script authors when they are using header strings that may be incompatible with
-//   browser implementations of the Fetch spec.
-//
-//   Move this class to the `api` directory and rename to HeaderString.
-class ByteString: public kj::String {
- public:
-  // Inheriting constructors does not inherit copy/move constructors, so we declare a forwarding
-  // constructor instead.
-  template <typename... Params>
-  explicit ByteString(Params&&... params): kj::String(kj::fwd<Params>(params)...) {}
-
-  enum class Warning {
-    NONE,                     // Contains 7-bit code points -- semantics won't change
-    CONTAINS_EXTENDED_ASCII,  // Contains 8-bit code points -- semantics WILL change
-    CONTAINS_UNICODE,         // Contains 16-bit code points -- semantics WILL change
-  };
-  Warning warning = Warning::NONE;
-  // HACK: ByteString behaves just like a kj::String, but has this crappy enum to tell the code that
-  //   consumes it that it contains a value which a real Web IDL ByteString would have encoded
-  //   differently. We can't usefully do anything about the information in JSG, because we don't
-  //   have access to the IoContext to print a warning in the inspector.
-  //
-  //   We default the enum to NONE so that ByteString(kj::str(otherHeader)) works as expected.
-};
-
 // A USVString has the exact same representation as a kj::String, but we guarantee that it meets
 // the WHATWG definition of a "scalar value string". Particularly, a USVString will never contain
 // invalid surrogate characters. A USVString should be used when implementing a Web API that
@@ -2350,6 +2322,42 @@ class ExternalMemoryAdjustment final {
   void maybeDeferAdjustment(ssize_t amount);
 };
 
+// If memory protection keys are enabled, provides the ability to run a function
+// within the scope of a particular protection key associated with the isolate lock.
+// This class is designed to be movable.
+class MemoryProtectionKeyScope final {
+ public:
+  KJ_DISALLOW_COPY(MemoryProtectionKeyScope);
+  MemoryProtectionKeyScope(MemoryProtectionKeyScope&&) = default;
+  MemoryProtectionKeyScope& operator=(MemoryProtectionKeyScope&&) = default;
+
+  auto runWithKey(auto func) {
+#ifdef V8_ENABLE_SANDBOX
+    PkeyScope scope(pkey);
+#endif
+    return func();
+  }
+
+ private:
+#ifdef V8_ENABLE_SANDBOX
+  int pkey;
+  MemoryProtectionKeyScope(Lock&);
+
+  struct PkeyScope {
+    int key;
+    int saved;
+    PkeyScope(int pkey);
+    ~PkeyScope();
+  };
+#else
+  MemoryProtectionKeyScope(Lock&) {
+    // No-op if sandboxing is not enabled.
+  }
+#endif
+
+  friend class Lock;
+};
+
 // Represents an isolate lock, which allows the current thread to execute JavaScript code within
 // an isolate. A thread must lock an isolate -- obtaining an instance of `Lock` -- before it can
 // manipulate JavaScript objects or execute JavaScript code inside the isolate.
@@ -2393,6 +2401,15 @@ class Lock {
   Ref<T> allocAccounted(size_t accountedSize, Params&&... params) {
     return Ref<T>(kj::refcounted<T>(kj::fwd<Params>(params)...)
                       .attach(getExternalMemoryAdjustment(accountedSize)));
+  }
+
+  // When you want to temporarily use a memory allocation that is protected
+  // by the isolate's memory protection key, use this to get a utility that
+  // will capture the key and allow you to run a function with the key enabled.
+  // The key use case is to allow tempporary access outside of the isolate lock
+  // for things like ArrayBuffer backing stores.
+  MemoryProtectionKeyScope getMemoryProtectionKeyScope() {
+    return MemoryProtectionKeyScope(*this);
   }
 
   v8::Local<v8::Context> v8Context() {
