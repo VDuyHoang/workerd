@@ -1584,8 +1584,8 @@ class RequestObserverWithTracer final: public RequestObserver, public WorkerInte
   ~RequestObserverWithTracer() noexcept(false) {
     KJ_IF_SOME(t, tracer) {
       // for a more precise end time, set the end timestamp now, if available
-      if (IoContext::hasCurrent()) {
-        auto time = IoContext::current().now();
+      KJ_IF_SOME(ioContext, IoContext::tryCurrent()) {
+        auto time = ioContext.now();
         t->recordTimestamp(time);
       }
       t->setOutcome(
@@ -3225,13 +3225,7 @@ class Server::WorkerService final: public Service,
     co_await context.waitForOutputLocks();
 
     auto innerReq = client->request(kj::HttpMethod::POST, urlStr, headers, requestJson.size());
-
-    struct RefcountedWrapper: public kj::Refcounted {
-      explicit RefcountedWrapper(kj::Own<kj::HttpClient> client): client(kj::mv(client)) {}
-      kj::Own<kj::HttpClient> client;
-    };
-    auto rcClient = kj::refcounted<RefcountedWrapper>(kj::mv(client));
-    auto request = attachToRequest(kj::mv(innerReq), kj::mv(rcClient));
+    auto request = attachToRequest(kj::mv(innerReq), kj::refcountedWrapper(kj::mv(client)));
 
     co_await request.body->write(requestJson.asBytes())
         .attach(kj::mv(requestJson), kj::mv(request.body));
