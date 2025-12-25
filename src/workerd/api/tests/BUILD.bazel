@@ -341,6 +341,22 @@ wd_test(
     data = ["unsafe-test.js"],
 )
 
+# Test that verifies autogates are ENABLED - only runs in @all-autogates variant
+wd_test(
+    src = "autogate-enabled-test.wd-test",
+    args = ["--experimental"],
+    data = ["autogate-enabled-test.js"],
+    generate_default_variant = False,
+)
+
+# Test that verifies autogates are DISABLED - only runs in default variant
+wd_test(
+    src = "autogate-disabled-test.wd-test",
+    args = ["--experimental"],
+    data = ["autogate-disabled-test.js"],
+    generate_all_autogates_variant = False,
+)
+
 wd_test(
     src = "url-test.wd-test",
     args = ["--experimental"],
@@ -585,4 +601,10 @@ wd_test(
     src = "compression-streams-test.wd-test",
     args = ["--experimental"],
     data = ["compression-streams-test.js"],
+)
+
+wd_test(
+    src = "identity-transform-stream-state-machine-test.wd-test",
+    args = ["--experimental"],
+    data = ["identity-transform-stream-state-machine-test.js"],
 )
