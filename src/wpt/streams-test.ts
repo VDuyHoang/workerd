@@ -727,32 +727,17 @@ export default {
       'write: returning a rejected promise (second write) should cause writer write() and ready to reject',
     ],
   },
-  'writable-streams/byte-length-queuing-strategy.any.js': {
-    comment:
-      'TypeError: The value cannot be converted because it is not an integer.',
-    expectedFailures: [
-      'Closing a writable stream with in-flight writes below the high water mark delays the close call properly',
-    ],
-  },
-  'writable-streams/close.any.js': {
-    comment: 'To be investigated',
-    expectedFailures: [
-      'releaseLock() should not change the result of sync close()',
-    ],
-  },
+  'writable-streams/byte-length-queuing-strategy.any.js': {},
+  'writable-streams/close.any.js': {},
   'writable-streams/constructor.any.js': {
     comment: 'These are mostly about validation of params',
     expectedFailures:
       process.platform === 'win32'
         ? [
-            'controller argument should be passed to start method',
             'WritableStream should be writable and ready should fulfill immediately if the strategy does not apply backpressure',
-            "WritableStream can't be constructed with a defined type",
           ]
         : [
-            'controller argument should be passed to start method',
             'WritableStream should be writable and ready should fulfill immediately if the strategy does not apply backpressure',
-            "WritableStream can't be constructed with a defined type",
             'underlyingSink argument should be converted after queuingStrategy argument',
           ],
   },
@@ -772,8 +757,6 @@ export default {
   'writable-streams/general.any.js': {
     comment: 'To be investigated',
     expectedFailures: [
-      'desiredSize on a writer for an errored stream',
-      "WritableStream's strategy.size should not be called as a method",
       'closed and ready on a released writer',
       'ready promise should fire before closed on releaseLock',
     ],

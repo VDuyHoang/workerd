@@ -38,11 +38,10 @@ def wpt_test(name, wpt_directory, config, compat_date = "", compat_flags = [], a
     wpt_tsproject = "//src/wpt:wpt-all@tsproject"
     harness = "//src/wpt:harness@js"
     wpt_cacert = "@wpt//:tools/certs/cacert.pem"
+    wpt_common = "@wpt//:common@module"
 
     if compat_date == "":
-        compat_date_path = "//src/workerd/io:trimmed-supported-compatibility-date.txt"
-    else:
-        compat_date_path = None
+        compat_date = "2999-12-31"
 
     _wpt_js_test_gen(
         name = js_test_gen_rule,
@@ -60,10 +59,9 @@ def wpt_test(name, wpt_directory, config, compat_date = "", compat_flags = [], a
         test_config = test_config_as_js,
         test_js_generated = js_test_gen_rule,
         harness = harness,
-        compat_date = compat_date,
-        compat_date_path = compat_date_path,
         autogates = autogates,
         wpt_cacert = wpt_cacert,
+        wpt_common = wpt_common,
         compat_flags = compat_flags + ["experimental", "nodejs_compat", "unsupported_process_actual_platform"],
     )
 
@@ -73,10 +71,8 @@ def wpt_test(name, wpt_directory, config, compat_date = "", compat_flags = [], a
         wpt_directory,  # e.g. wpt/url/**",
         harness,  # e.g. wpt/harness/*.ts
         wpt_cacert,  # i.e. "wpt/tools/certs/cacert.pem",
+        wpt_common,  # i.e. "wpt/common/**"
     ]
-
-    if compat_date_path:
-        data.append(compat_date_path)  # i.e. trimmed-supported-compatibility-date.txt
 
     wd_test(
         name = "{}".format(name),
@@ -84,6 +80,8 @@ def wpt_test(name, wpt_directory, config, compat_date = "", compat_flags = [], a
         args = ["--experimental"],
         sidecar_port_bindings = PORT_BINDINGS if start_server else [],
         sidecar = "@wpt//:entrypoint" if start_server else None,
+        compat_date = compat_date,
+        generate_all_compat_flags_variant = False,  # Already using future date where possible.
         data = data,
         **kwargs
     )
@@ -233,22 +231,21 @@ def _wpt_wd_test_gen_impl(ctx):
     src = ctx.actions.declare_file("{}.wd-test".format(ctx.attr.test_name))
     base = ctx.attr.wpt_directory[WPTModuleInfo].base
 
-    if ctx.file.compat_date_path != None:
-        compat_date = "compatibilityDate = embed \"{}\",".format(wd_test_relative_path(src, ctx.file.compat_date_path))
-    else:
-        compat_date = "compatibilityDate = \"{}\",".format(ctx.attr.compat_date)
-
+    # Generate bindings for test directory files plus common/**/*.js
+    bindings = generate_external_bindings(src, base, ctx.attr.wpt_directory.files)
+    common_base = ctx.attr.wpt_common[WPTModuleInfo].base
+    common_bindings = generate_common_bindings(src, common_base, ctx.attr.wpt_common.files)
+    all_bindings = bindings + ",\n" + common_bindings if bindings and common_bindings else (bindings or common_bindings)
     ctx.actions.write(
         output = src,
         content = WPT_WD_TEST_TEMPLATE.format(
             test_name = ctx.attr.test_name,
             test_config = ctx.file.test_config.basename,
             test_js_generated = ctx.file.test_js_generated.basename,
-            bindings = generate_external_bindings(src, base, ctx.attr.wpt_directory.files),
+            bindings = all_bindings,
             harness_modules = generate_harness_modules(src, ctx.attr.harness.files),
             wpt_cacert = wd_test_relative_path(src, ctx.file.wpt_cacert),
             autogates = generate_autogates_field(ctx.attr.autogates),
-            compat_date = compat_date,
             compat_flags = generate_compat_flags_field(ctx.attr.compat_flags),
         ),
     )
@@ -270,12 +267,10 @@ _wpt_wd_test_gen = rule(
         "test_js_generated": attr.label(allow_single_file = True),
         # Target specifying the files in the WPT test harness
         "harness": attr.label(),
-        # A string representing the compatibility date
-        "compat_date": attr.string(mandatory = False, default = ""),
-        # Target specifying the location of the trimmed-supported-compatibility-date.txt file
-        "compat_date_path": attr.label(allow_single_file = True, mandatory = False, default = None),
         # Target specifying the location of the WPT CA certificate
         "wpt_cacert": attr.label(allow_single_file = True),
+        # Target specifying the WPT common directory module
+        "wpt_common": attr.label(),
         # A list of autogates to specify in the generated wd-test file
         "autogates": attr.string_list(),
         # A list of compatibility flags to specify in the generated wd-test file
@@ -305,7 +300,6 @@ const unitTests :Workerd.Config = (
           (name = "GEN_TEST_STATS", fromEnvironment = "GEN_TEST_STATS"),
           {bindings}
         ],
-        {compat_date}
         {compat_flags}
       )
     ),
@@ -370,6 +364,29 @@ def generate_external_bindings(wd_test_file, base, files):
             continue
 
         result.append('(name = "{}", {} = embed "{}")'.format(module_relative_path(base, file), binding_type, wd_test_relative_path(wd_test_file, file)))
+
+    return ",\n".join(result)
+
+def generate_common_bindings(wd_test_file, base, files):
+    """
+    Generates appropriate bindings for each file in the WPT common module.
+    Files are prefixed with /common/ path.
+
+    Only JS files are included as some JSON files in common/ contain
+    non-standard JSON (e.g., with comments) that would cause parsing errors.
+    """
+
+    result = []
+
+    for file in files.to_list():
+        if file.extension == "js":
+            binding_type = "text"
+        else:
+            # Skip non-JS files to avoid issues with non-standard JSON
+            continue
+
+        relative_path = module_relative_path(base, file)
+        result.append('(name = "/common/{}", {} = embed "{}")'.format(relative_path, binding_type, wd_test_relative_path(wd_test_file, file)))
 
     return ",\n".join(result)
 

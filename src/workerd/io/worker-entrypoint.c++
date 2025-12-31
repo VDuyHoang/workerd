@@ -560,9 +560,8 @@ kj::Promise<void> WorkerEntrypoint::prewarm(kj::StringPtr url) {
       kj::mv(KJ_REQUIRE_NONNULL(this->incomingRequest, "prewarm() can only be called once"));
   incomingRequest->getMetrics().setIsPrewarm();
 
-  // TODO(streaming-tail): Should prewarm be reflected in the tail stream somehow?
-
-  // Intentionally don't call incomingRequest->delivered() for prewarm requests.
+  // Intentionally don't call incomingRequest->delivered() for prewarm requests and do not create
+  // an Onset event, prewarm is not being traced.
 
   // TODO(someday): Ideally, middleware workers would forward prewarm() to the next stage. At
   //   present we don't have a good way to decide what stage that is, especially given that we'll
@@ -639,12 +638,6 @@ kj::Promise<WorkerInterface::AlarmResult> WorkerEntrypoint::runAlarmImpl(
     // TODO(someday) If the request responsible for fulfilling this alarm were to be cancelled, then
     // we could probably take over and try to fulfill it ourselves. Maybe we'd want to loop on
     // `actor.getAlarm()`? We'd have to distinguish between rescheduling and request cancellation.
-
-    // Mark the tracer as unused since we're not actually running this alarm - we're just waiting
-    // for the existing alarm's result.
-    KJ_IF_SOME(t, incomingRequest->getWorkerTracer()) {
-      t.markUnused();
-    }
     auto result = co_await promise;
     co_return result;
   }
