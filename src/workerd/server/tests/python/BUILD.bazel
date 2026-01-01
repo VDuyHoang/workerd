@@ -1,4 +1,4 @@
-load("//src/workerd/server/tests/python:import_tests.bzl", "gen_import_tests", "gen_rust_import_tests")
+load("//src/workerd/server/tests/python:import_tests.bzl", "gen_rust_import_tests")
 load("//src/workerd/server/tests/python:py_wd_test.bzl", "py_wd_test", "python_test_setup")
 
 python_test_setup()
@@ -9,10 +9,7 @@ py_wd_test("env-param")
 
 py_wd_test(
     "top-level-env",
-    # TODO: snapshot for env
-    make_snapshot = False,
     skip_python_flags = ["0.26.0a2"],
-    use_snapshot = None,
 )
 
 py_wd_test("asgi")
@@ -26,15 +23,6 @@ py_wd_test("subdirectory")
 py_wd_test("sdk")
 
 py_wd_test("seek-metadatafs")
-
-gen_import_tests(
-    pkg_skip_versions = {
-        "0.28.2": [
-            "micropip",  # missing lockfile
-            "soupsieve",  # Circular dependency with beautifulsoup4
-        ],
-    },
-)
 
 gen_rust_import_tests()
 
@@ -64,11 +52,7 @@ py_wd_test(
 
 py_wd_test("js-import")
 
-py_wd_test(
-    "importable-env",
-    # TODO: why doesn't dedicated snapshot work with this?
-    use_snapshot = None,
-)
+py_wd_test("importable-env")
 
 py_wd_test("python-rpc")
 
