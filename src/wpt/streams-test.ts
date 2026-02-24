@@ -352,26 +352,7 @@ export default {
     ],
   },
 
-  'readable-byte-streams/bad-buffers-and-views.any.js': {
-    comment: 'See individual comments',
-    expectedFailures: [
-      "ReadableStream with byte source: respond() throws if the BYOB request's buffer has been detached (in the closed state)",
-      // TODO(conform): The spec expects us to throw here because the supplied view
-      // has a different offset. Instead, we allow it because the view is zero length
-      // and the controller has been closed (we do the close and zero length check)
-      // first.
-      // assert_throws_js(RangeError, () => c.byobRequest.respondWithNewView(view));
-      'ReadableStream with byte source: respondWithNewView() throws if the supplied view has a different offset (in the closed state)',
-      // TODO(conform): The spec expects this to be a RangeError
-      "ReadableStream with byte source: respondWithNewView() throws if the supplied view's buffer is zero-length (in the closed state)",
-      // TODO(conform): The spec expects this to be a RangeError
-      "ReadableStream with byte source: respondWithNewView() throws if the supplied view's buffer has a different length (in the closed state)",
-      // TODO(conform): We currently do not throw here since reading causes the
-      // view here to be zero length, which is allowed when the stream is closed.
-      //assert_throws_js(TypeError, () => c.byobRequest.respondWithNewView(view));
-      "ReadableStream with byte source: enqueue() throws if the BYOB request's buffer has been detached (in the closed state)",
-    ],
-  },
+  'readable-byte-streams/bad-buffers-and-views.any.js': {},
   'readable-byte-streams/construct-byob-request.any.js': {},
   'readable-byte-streams/crashtests/tee-locked-stream.any.js': {},
   'readable-byte-streams/enqueue-with-detached-buffer.any.js': {},
@@ -651,19 +632,7 @@ export default {
       'Floating point arithmetic must manifest near 0 (total ends up zero)',
     ],
   },
-  'readable-streams/from.any.js': {
-    comment: 'See comments on tests',
-    disabledTests: [
-      // A hanging promise was cancelled
-      'ReadableStream.from: cancel() rejects when return() rejects',
-      'ReadableStream.from: cancel() rejects when return() fulfills with a non-object',
-    ],
-    expectedFailures: [
-      // TODO(soon): This one is a bit pedantic. We ignore the case where return() is not
-      // a method whereas the spec expects us to return a rejected promise in this case.
-      'ReadableStream.from: cancel() rejects when return() is not a method',
-    ],
-  },
+  'readable-streams/from.any.js': {},
   'readable-streams/garbage-collection.any.js': {
     comment: 'See comments on individual tests',
     disabledTests: [
@@ -825,12 +794,8 @@ export default {
     comment: 'To be investigated',
     expectedFailures: [
       'readable.cancel() and a parallel writable.close() should reject if a transformer.cancel() calls controller.error()',
-      'closing the writable side should reject if a parallel transformer.cancel() throws',
       'writable.abort() and readable.cancel() should reject if a transformer.cancel() calls controller.error()',
-      'readable.cancel() should not call cancel() again when already called from writable.abort()',
-      'writable.close() should not call flush() when cancel() is already called from readable.cancel()',
       'writable.abort() should not call cancel() again when already called from readable.cancel()',
-      'readable.cancel() should not call cancel() when flush() is already called from writable.close()',
     ],
   },
   'transform-streams/errors.any.js': {
@@ -840,16 +805,11 @@ export default {
       'an exception from transform() should error the stream if terminate has been requested but not completed',
     ],
     expectedFailures: [
-      'when controller.error is followed by a rejection, the error reason should come from controller.error',
       'TransformStream constructor should throw when start does',
       'when strategy.size throws inside start(), the constructor should throw the same error',
       'when strategy.size calls controller.error() then throws, the constructor should throw the first error',
-      'it should be possible to error the readable between close requested and complete',
       'controller.error() should do nothing after a transformer method has thrown an exception',
-      'controller.error() should do nothing the second time it is called',
-      'abort should set the close reason for the writable when it happens before cancel during start, and cancel should reject',
       'controller.error() should close writable immediately after readable.cancel()',
-      'abort should set the close reason for the writable when it happens before cancel during underlying sink write, but cancel should still succeed',
       'erroring during write with backpressure should result in the write failing',
     ],
   },
@@ -914,8 +874,6 @@ export default {
     comment: 'To be investigated',
     expectedFailures: [
       'controller.error() after controller.terminate() with queued chunk should error the readable',
-      'controller.error() after controller.terminate() without queued chunk should do nothing',
-      'controller.terminate() inside flush() should not prevent writer.close() from succeeding',
     ],
   },
 
