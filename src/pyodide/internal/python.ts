@@ -21,6 +21,7 @@ import {
   LEGACY_VENDOR_PATH,
   setCpuLimitNearlyExceededCallback,
 } from 'pyodide-internal:metadata';
+import { default as FatalReporter } from 'pyodide-internal:fatal-reporter';
 
 /**
  * SetupEmscripten is an internal module defined in setup-emscripten.h the module instantiates
@@ -40,6 +41,7 @@ import { loadPackages } from 'pyodide-internal:loadPackage';
 import { default as MetadataReader } from 'pyodide-internal:runtime-generated/metadata';
 import { TRANSITIVE_REQUIREMENTS } from 'pyodide-internal:metadata';
 import { getTrustedReadFunc } from 'pyodide-internal:readOnlyFS';
+import { PyodideVersion } from 'pyodide-internal:const';
 
 /**
  * After running `instantiateEmscriptenModule` but before calling into any C
@@ -62,7 +64,7 @@ function prepareWasmLinearMemory(
     // the /session/metadata path is added.
     adjustSysPath(Module);
   }
-  if (Module.API.version !== '0.26.0a2') {
+  if (Module.API.version !== PyodideVersion.V0_26_0a2) {
     finalizeBootstrap(Module, customSerializedObjects);
   }
 }
@@ -152,7 +154,7 @@ function makeSetTimeout(Module: Module): typeof setTimeout {
 }
 
 function getSignalClockAddr(Module: Module): number {
-  if (Module.API.version !== '0.28.2') {
+  if (Module.API.version !== PyodideVersion.V0_28_2) {
     throw new PythonWorkersInternalError(
       'getSignalClockAddr only supported in 0.28.2'
     );
@@ -172,10 +174,10 @@ function getSignalClockAddr(Module: Module): number {
 function setupRuntimeSignalHandling(Module: Module): void {
   Module.Py_EmscriptenSignalBuffer = new Uint8Array(1);
   const version = Module.API.version;
-  if (version === '0.26.0a2') {
+  if (version === PyodideVersion.V0_26_0a2) {
     return;
   }
-  if (version === '0.28.2') {
+  if (version === PyodideVersion.V0_28_2) {
     // The callback sets signal_clock to 0 and signal_handling to 1. It has to be in C++ because we
     // don't hold the isolate lock when we call it. JS code would be:
     //
@@ -195,7 +197,7 @@ function setupRuntimeSignalHandling(Module: Module): void {
 const SIGXCPU = 24;
 
 export function clearSignals(Module: Module): void {
-  if (Module.API.version === '0.28.2') {
+  if (Module.API.version === PyodideVersion.V0_28_2) {
     // In case the previous request was aborted, make sure that:
     // 1. a sigint is waiting in the signal buffer
     // 2. signal handling is off
@@ -270,7 +272,7 @@ export function loadPyodide(
     // present in snapshot memory.
     mountWorkerFiles(Module);
 
-    if (Module.API.version === '0.26.0a2') {
+    if (Module.API.version === PyodideVersion.V0_26_0a2) {
       // Finish setting up Pyodide's ffi so we can use the nice Python interface
       // In newer versions we already did this in prepareWasmLinearMemory.
       finalizeBootstrap(Module, customSerializedObjects);
@@ -292,6 +294,13 @@ export function loadPyodide(
     );
     setupPythonSearchPath(pyodide);
     setupRuntimeSignalHandling(Module);
+    Module.API.on_fatal = (error: unknown): void => {
+      try {
+        FatalReporter.reportFatal(String(error));
+      } catch (_e) {
+        FatalReporter.reportFatal('Internal error reporting fatal error');
+      }
+    };
     return pyodide;
   } catch (e) {
     // In edgeworker test suite, without this we get the file name and line number of the exception
