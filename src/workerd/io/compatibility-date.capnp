@@ -1367,7 +1367,8 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
 
   queueExposeErrorCodes @158 :Bool
     $compatEnableFlag("queue_expose_error_codes")
-    $compatDisableFlag("no_queue_expose_error_codes");
+    $compatDisableFlag("no_queue_expose_error_codes")
+    $compatEnableDate("2026-03-12");
   # When enabled, queue operations will include detailed error information (error code and cause)
 
   textDecoderReplaceSurrogates @159 :Bool
@@ -1410,4 +1411,19 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
     $compatEnableDate("2026-03-03");
   # Enables the dedicated CJK TextDecoder implementation for overrides and
   # Big5 lead-byte handling instead of the legacy ICU-only path.
+
+  websocketCloseReasonByteLimit @164 :Bool
+      $compatEnableFlag("websocket_close_reason_byte_limit")
+      $compatDisableFlag("no_websocket_close_reason_byte_limit")
+      $compatEnableDate("2026-03-03");
+  # When enabled, WebSocket close() throws a SyntaxError DOMException if the
+  # reason string exceeds 123 bytes when UTF-8 encoded, as required by the
+  # WHATWG WebSocket spec and RFC 6455 Section 5.5. Previously, workerd allowed
+  # arbitrarily long close reasons without validation.
+
+  enableVersionApi @165 :Bool
+    $compatEnableFlag("enable_version_api")
+    $experimental;
+  # Enables version-related APIs. This currently only enables the `version` option in loopback
+  # bindings to specify a requested version. The behaviour of this flag will change in the future.
 }

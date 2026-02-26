@@ -607,7 +607,8 @@ void WebSocket::send(jsg::Lock& js, kj::OneOf<kj::Array<byte>, kj::String> messa
   ensurePumping(js);
 }
 
-void WebSocket::close(jsg::Lock& js, jsg::Optional<int> code, jsg::Optional<kj::String> reason) {
+void WebSocket::close(
+    jsg::Lock& js, jsg::Optional<int> code, jsg::Optional<jsg::USVString> reason) {
   auto& native = *farNative;
 
   // Per the spec, close code and reason validation must happen before any readyState checks.
@@ -624,6 +625,16 @@ void WebSocket::close(jsg::Lock& js, jsg::Optional<int> code, jsg::Optional<kj::
   KJ_IF_SOME(c, code) {
     JSG_REQUIRE(c >= 1000 && c < 5000 && c != 1004 && c != 1005 && c != 1006 && c != 1015,
         DOMInvalidAccessError, "Invalid WebSocket close code: ", c, ".");
+  }
+
+  // Per the WHATWG WebSocket spec and RFC 6455 Section 5.5, the close frame body must not exceed
+  // 125 bytes (2-byte status code + up to 123 bytes of reason). Throw a SyntaxError if the
+  // reason's UTF-8 encoding is longer than 123 bytes.
+  if (FeatureFlags::get(js).getWebsocketCloseReasonByteLimit()) {
+    KJ_IF_SOME(r, reason) {
+      JSG_REQUIRE(r.size() <= 123, DOMSyntaxError,
+          "WebSocket close reason must not be longer than 123 bytes when UTF-8 encoded.");
+    }
   }
 
   // The default code of 1005 cannot have a reason, per the standard, so if a reason is specified
@@ -671,7 +682,7 @@ void WebSocket::close(jsg::Lock& js, jsg::Optional<int> code, jsg::Optional<kj::
     kj::WebSocket::Close{
       // Code 1005 actually translates to sending a close message with no body on the wire.
       static_cast<uint16_t>(code.orDefault(1005)),
-      kj::mv(reason).orDefault(nullptr),
+      kj::mv(reason).orDefault(jsg::USVString(kj::str())),
     },
     pendingAutoResponses});
 

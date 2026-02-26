@@ -104,8 +104,9 @@ struct DummyIoChannelFactory final: public IoChannelFactory {
     KJ_FAIL_ASSERT("no subrequests");
   }
 
-  kj::Own<SubrequestChannel> getSubrequestChannel(
-      uint channel, kj::Maybe<Frankenvalue> props) override {
+  kj::Own<SubrequestChannel> getSubrequestChannel(uint channel,
+      kj::Maybe<Frankenvalue> props,
+      kj::Maybe<VersionRequest> versionRequest) override {
     KJ_FAIL_ASSERT("no subrequests");
   }
 
@@ -132,7 +133,8 @@ struct DummyIoChannelFactory final: public IoChannelFactory {
       ActorGetMode mode,
       bool enableReplicaRouting,
       ActorRoutingMode routingMode,
-      SpanParent parentSpan) override {
+      SpanParent parentSpan,
+      kj::Maybe<ActorVersion> version) override {
     KJ_FAIL_REQUIRE("no actor channels");
   }
 
