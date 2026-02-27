@@ -13,6 +13,8 @@ If you want to suggest a code change, post a `suggestion` comment instead of edi
 
 ## Output rules
 
+**Confirm you are acting on the correct issue or PR**. Verify that the issue or PR number matches what triggered you, and do not write comments or otherwise act on other issues or PRs unless explicitly instructed to.
+
 **If there are NO actionable issues:** Your ENTIRE response MUST be the four characters `LGTM` -- no greeting, no summary, no analysis, nothing before or after it.
 
 **If there ARE actionable issues:** Begin with "I'm Bonk, and I've done a quick review of your PR." Then:
@@ -55,7 +57,14 @@ Each comment needs `path`, `line`, `side`, and `body`. Use `suggestion` fences i
 
 ## Review focus areas
 
-**C++ code quality:** Correct use of KJ patterns (kj::Own, kj::Maybe, kj::Promise, kj::Array). Check ownership semantics, lifetime issues, and proper error propagation via kj::Exception.
+**Code quality:** Refer to the following checklists:
+- For C++, use the `kj-style`, and `workerd-safety-review` skills
+- For JavaScript and TypeScript, use the `ts-style` skill
+- For Rust, use the `rust-review` skill
+- For all code, use the `workerd-api-review` skill for API design, performance, security, and
+  standards compliance
+- Review added or updated tests to ensure they cover the relevant code changes
+- Review code comments for clarity and accuracy
 
 **Backward compatibility:** workerd has a strong backward compat commitment. New behavior changes MUST be gated behind compatibility flags (see compatibility-date.capnp). Flag any ungated behavioral change as high severity.
 
@@ -68,10 +77,6 @@ Each comment needs `path`, `line`, `side`, and `body`. Use `suggestion` fences i
 **JSG bindings:** Changes in jsg/ must correctly bridge V8 and C++. Check type conversions, GC safety, and proper use of jsg:: macros.
 
 **Node.js compatibility (src/node/, src/workerd/api/node/):** Verify behavior matches Node.js. Check for missing error cases and edge cases in polyfills.
-
-**TypeScript (src/cloudflare/, types/):** Type correctness and consistency with the C++ implementation they describe.
-
-**Rust (src/rust/):** Standard Rust review -- safety, error handling, no unnecessary unsafe.
 
 **Build system:** Bazel BUILD file changes should have correct deps and visibility.
 
