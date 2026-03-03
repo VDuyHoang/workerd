@@ -41,7 +41,8 @@ class ContainerClient final: public rpc::Container::Server, public kj::Refcounte
       kj::String imageName,
       kj::Maybe<kj::String> containerEgressInterceptorImage,
       kj::TaskSet& waitUntilTasks,
-      kj::Function<void()> cleanupCallback,
+      kj::Promise<void> pendingCleanup,
+      kj::Function<void(kj::Promise<void>)> cleanupCallback,
       ChannelTokenHandler& channelTokenHandler);
 
   ~ContainerClient() noexcept(false);
@@ -73,6 +74,12 @@ class ContainerClient final: public rpc::Container::Server, public kj::Refcounte
   kj::Maybe<kj::String> containerEgressInterceptorImage;
 
   kj::TaskSet& waitUntilTasks;
+
+  // Forked promise representing pending cleanup from a previous ContainerClient for the same
+  // container ID. status() co_awaits a branch so that Docker inspect only runs after any
+  // in-flight DELETE from the previous client has settled (either completed or been cancelled
+  // via containerCleanupCanceler, in which case the .catch_() resolves it immediately).
+  kj::ForkedPromise<void> pendingCleanup;
 
   static constexpr kj::StringPtr defaultEnv[] = {"CLOUDFLARE_COUNTRY_A2=XX"_kj,
     "CLOUDFLARE_DEPLOYMENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"_kj,
@@ -108,6 +115,9 @@ class ContainerClient final: public rpc::Container::Server, public kj::Refcounte
       kj::String endpoint,
       kj::Maybe<kj::String> body = kj::none);
   kj::Promise<InspectResponse> inspectContainer();
+  // Inspect the sidecar container and extract the --http-egress-port from its args.
+  // Returns kj::none if the sidecar doesn't exist or is not running.
+  kj::Promise<kj::Maybe<uint16_t>> inspectSidecarEgressPort();
   kj::Promise<void> createContainer(kj::Maybe<capnp::List<capnp::Text>::Reader> entrypoint,
       kj::Maybe<capnp::List<capnp::Text>::Reader> environment,
       rpc::Container::StartParams::Reader params);
@@ -122,8 +132,10 @@ class ContainerClient final: public rpc::Container::Server, public kj::Refcounte
   kj::Promise<void> destroySidecarContainer();
   kj::Promise<void> monitorSidecarContainer();
 
-  // Cleanup callback to remove from ActorNamespace map when destroyed
-  kj::Function<void()> cleanupCallback;
+  // Cleanup callback invoked from the destructor. Receives the joined cleanup promise so
+  // ActorNamespace can wrap it with the canceler, store it for the next ContainerClient
+  // to await, and add a branch to waitUntilTasks to keep the cleanup tasks alive.
+  kj::Function<void(kj::Promise<void>)> cleanupCallback;
 
   // For redeeming channel tokens received via setEgressHttp
   ChannelTokenHandler& channelTokenHandler;
@@ -172,12 +184,13 @@ class ContainerClient final: public rpc::Container::Server, public kj::Refcounte
   // Check if the Docker daemon has IPv6 enabled by inspecting the default bridge network's
   // IPAM config for IPv6 subnets.
   kj::Promise<bool> isDaemonIpv6Enabled();
-  // Start the egress listener on the given address with an OS-chosen port.
-  kj::Promise<uint16_t> startEgressListener(kj::String listenAddress);
+  // Start the egress listener on the given address. If port is 0, an OS-chosen port is used.
+  kj::Promise<uint16_t> startEgressListener(kj::String listenAddress, uint16_t port = 0);
   void stopEgressListener();
   // Ensure the egress listener is started exactly once.
-  // Uses egressListenerStarted as a guard. Called from setEgressHttp().
-  kj::Promise<void> ensureEgressListenerStarted();
+  // Uses egressListenerStarted as a guard. Called from setEgressHttp() and status().
+  // If port is non-zero, binds to that specific port (for reconnecting to an existing sidecar).
+  kj::Promise<void> ensureEgressListenerStarted(uint16_t port = 0);
   // Ensure the egress listener and sidecar container are started exactly once.
   // Uses containerSidecarStarted as a guard. Called from both start() and setEgressHttp().
   kj::Promise<void> ensureSidecarStarted();

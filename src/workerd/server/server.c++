@@ -1789,6 +1789,13 @@ class NullIsolateLimitEnforcer final: public IsolateLimitEnforcer {
   bool hasExcessivelyExceededHeapLimit() const override {
     return false;
   }
+
+  const TrackedWasmInstanceList& getTrackedWasmInstances() const override {
+    return trackedWasmInstances;
+  }
+
+ private:
+  TrackedWasmInstanceList trackedWasmInstances;
 };
 
 }  // namespace
@@ -2855,15 +2862,55 @@ class Server::WorkerService final: public Service,
       auto& dockerPathRef = KJ_ASSERT_NONNULL(
           dockerPath, "dockerPath must be defined to enable containers on this Durable Object.");
 
-      // Remove from the map when the container is destroyed
-      kj::Function<void()> cleanupCallback = [this, containerId = kj::str(containerId)]() {
-        containerClients.erase(containerId);
+      // Grab a branch of any pending cleanup from a previous ContainerClient for this
+      // container. If it exists, pass it to the container client so it knows that it has to sync.
+      kj::Promise<void> previousCleanup = kj::READY_NOW;
+      KJ_IF_SOME(state, containerCleanupState.find(containerId)) {
+        previousCleanup = state.promise.addBranch();
+      }
+
+      // Upsert the cleanup state for this container ID. Replacing the
+      // canceler auto-cancels any in-flight cleanup tasks from the previous
+      // client's destructor. The generation counter is bumped on replacement
+      // so the cleanup callback can detect stale ownership without relying
+      // on raw pointer identity (which is vulnerable to address reuse).
+      auto canceler = kj::heap<kj::Canceler>();
+      uint64_t capturedGeneration = 0;
+      containerCleanupState.upsert(kj::str(containerId),
+          ContainerCleanupState{.canceler = kj::mv(canceler)},
+          [&capturedGeneration](ContainerCleanupState& existing, ContainerCleanupState&& incoming) {
+        existing.canceler = kj::mv(incoming.canceler);
+        capturedGeneration = ++existing.generation;
+      });
+
+      // Cleanup callback: invoked from the ContainerClient destructor with the joined
+      // with a cleanup promise
+      kj::Function<void(kj::Promise<void>)> cleanupCallback =
+          [this, containerId = kj::str(containerId), capturedGeneration](
+              kj::Promise<void> cleanupPromise) mutable {
+        KJ_IF_SOME(state, containerCleanupState.find(containerId)) {
+          if (state.generation != capturedGeneration) {
+            // A newer ContainerClient has replaced us already with another destructor.
+            // drop the promise.
+            return;
+          }
+
+          containerClients.erase(containerId);
+          // Wrap with the canceler so a future client creation can cancel these
+          // tasks
+          auto cancellable =
+              state.canceler->wrap(kj::mv(cleanupPromise)).catch_([](kj::Exception&&) {});
+
+          auto forked = kj::mv(cancellable).fork();
+          waitUntilTasks.add(forked.addBranch());
+          state.promise = kj::mv(forked);
+        }
       };
 
       auto client = kj::refcounted<ContainerClient>(byteStreamFactory, timer, dockerNetwork,
           kj::str(dockerPathRef), kj::str(containerId), kj::str(imageName),
           containerEgressInterceptorImage.map([](kj::StringPtr s) { return kj::str(s); }),
-          waitUntilTasks, kj::mv(cleanupCallback), channelTokenHandler);
+          waitUntilTasks, kj::mv(previousCleanup), kj::mv(cleanupCallback), channelTokenHandler);
 
       // Store raw pointer in map (does not own)
       containerClients.insert(kj::str(containerId), client.get());
@@ -2895,15 +2942,37 @@ class Server::WorkerService final: public Service,
     //   declare `actorStorage` before `actors`.
     kj::Maybe<ActorStorage> actorStorage;
 
-    // If the actor is broken, we remove it from the map. However, if it's just evicted due to
-    // inactivity, we keep the ActorContainer in the map but drop the Own<Worker::Actor>. When a new
-    // request comes in, we recreate the Own<Worker::Actor>.
-    ActorMap actors;
+    // Tracks the canceler and cleanup promise for a Docker container's lifecycle cleanup.
+    // Useful to await on async calls of a ContainerClient destructor when the new
+    // one appears before they've been resolved.
+    struct ContainerCleanupState {
+      // Canceler that wraps the promise fired in ~ContainerClient. Replacing
+      // it cancels any pending cleanup, which resolves the promise immediately.
+      kj::Own<kj::Canceler> canceler;
+
+      // Forked cleanup promise. A branch is added to waitUntilTasks to keep the I/O alive,
+      // and another branch is passed to the next ContainerClient so its status() can await.
+      kj::ForkedPromise<void> promise = kj::Promise<void>(kj::READY_NOW).fork();
+
+      // Monotonically increasing counter, bumped each time the canceler is replaced
+      // via upsert. The cleanup callback captures the generation at creation time and
+      // compares it to detect whether a newer ContainerClient has taken ownership,
+      // avoiding a raw-pointer identity check that is vulnerable to address reuse.
+      uint64_t generation = 0;
+    };
+
+    // Per-container cleanup state: canceler + forked cleanup promise.
+    kj::HashMap<kj::String, ContainerCleanupState> containerCleanupState;
 
     // Map of container IDs to ContainerClients (for reconnection support with inactivity timeouts).
     // The map holds raw pointers (not ownership) - ContainerClients are owned by actors and timers.
     // When the last reference is dropped, the destructor removes the entry from this map.
     kj::HashMap<kj::String, ContainerClient*> containerClients;
+
+    // If the actor is broken, we remove it from the map. However, if it's just evicted due to
+    // inactivity, we keep the ActorContainer in the map but drop the Own<Worker::Actor>. When a new
+    // request comes in, we recreate the Own<Worker::Actor>.
+    ActorMap actors;
 
     kj::Maybe<kj::Promise<void>> cleanupTask;
     kj::Timer& timer;
@@ -3896,6 +3965,13 @@ void Server::abortAllActors(kj::Maybe<const kj::Exception&> reason) {
       }
     }
   }
+
+  // When using vitest-pool-workers and DOs have alarms, alarms can still attempt to run after the tests
+  // end running that leads to internal reference errors.
+  // On more complex setups with multiple DOs that have alarms and all of them communicate with one another,
+  // there might be cases where there are isolated storage errors when calling DOs wake one another.
+  // Deleting all of them at the same time guarantees that user's implementations don't affect tests runs
+  alarmScheduler->deleteAllAlarms();
 }
 
 // WorkerDef is an intermediate representation of everything from `config::Worker::Reader` that
