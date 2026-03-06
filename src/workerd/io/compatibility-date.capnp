@@ -1458,4 +1458,23 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   # With HWM=0 the readable side starts with backpressure, so writes correctly
   # block until a reader pulls. Previously HWM defaulted to 1, which caused
   # pull() to fire at startup, clearing backpressure before any write.
+
+  specCompliantPropertyAttributes @169 :Bool
+      $compatEnableFlag("spec_compliant_property_attributes")
+      $compatDisableFlag("no_spec_compliant_property_attributes")
+      $experimental;
+  # Fixes several Web IDL compliance issues on property attributes:
+  #  - Constructor .length reflects the number of required arguments instead
+  #    of always being 0.
+  #  - Method and static method .length reflects the number of required
+  #    arguments instead of always being 0.
+  #  - Getter .length is explicitly 0 and setter .length is 1.
+  #  - Getter .name is "get <name>" and setter .name is "set <name>" per the
+  #    Web IDL spec, instead of empty strings.
+  #  - Constants gain DontDelete (non-configurable) on both the constructor
+  #    and prototype, matching { writable: false, enumerable: true,
+  #    configurable: false } per Web IDL.
+  #  - Interface objects (nested types) become own properties of globalThis
+  #    with { writable: true, enumerable: false, configurable: true }, instead
+  #    of being inherited from the prototype chain.
 }
