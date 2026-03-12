@@ -144,13 +144,26 @@ pub fn jsg_method(_attr: TokenStream, item: TokenStream) -> TokenStream {
         })
         .collect();
 
+    // Check if the first typed parameter is `&mut Lock` — if so, pass `&mut lock`
+    // directly instead of extracting it from JS args (like C++ jsg::Lock&).
+    let has_lock_param = params.first().is_some_and(|ty| is_lock_ref(ty));
+    let js_arg_offset = usize::from(has_lock_param);
+
     let (unwraps, arg_exprs): (Vec<_>, Vec<_>) = params
         .iter()
         .enumerate()
         .map(|(i, ty)| {
-            let arg = syn::Ident::new(&format!("arg{i}"), fn_name.span());
+            // First param is &mut Lock — pass the callback's lock directly.
+            if i == 0 && has_lock_param {
+                let unwrap = quote! {};
+                let arg_expr = quote! { &mut lock };
+                return (unwrap, arg_expr);
+            }
+
+            let js_index = i - js_arg_offset;
+            let arg = syn::Ident::new(&format!("arg{js_index}"), fn_name.span());
             let unwrap = quote! {
-                let #arg = match <#ty as jsg::FromJS>::from_js(&mut lock, args.get(#i)) {
+                let #arg = match <#ty as jsg::FromJS>::from_js(&mut lock, args.get(#js_index)) {
                     Ok(v) => v,
                     Err(err) => {
                         lock.throw_exception(&err);
@@ -328,6 +341,34 @@ fn generate_resource_impl(impl_block: &ItemImpl) -> TokenStream {
         })
         .collect();
 
+    let constant_registrations: Vec<_> = impl_block
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::ImplItem::Const(constant) = item else {
+                return None;
+            };
+            let attr = constant.attrs.iter().find(|a| {
+                a.path().is_ident("jsg_static_constant")
+                    || a.path()
+                        .segments
+                        .last()
+                        .is_some_and(|s| s.ident == "jsg_static_constant")
+            })?;
+
+            let rust_name = &constant.ident;
+            let js_name = extract_name_attribute(&attr.meta.to_token_stream().to_string())
+                .unwrap_or_else(|| rust_name.to_string());
+
+            Some(quote! {
+                jsg::Member::StaticConstant {
+                    name: #js_name.to_owned(),
+                    value: jsg::ConstantValue::from(Self::#rust_name),
+                }
+            })
+        })
+        .collect();
+
     let type_name = match &**self_ty {
         syn::Type::Path(p) => p
             .path
@@ -350,7 +391,7 @@ fn generate_resource_impl(impl_block: &ItemImpl) -> TokenStream {
         #[automatically_derived]
         impl jsg::Resource for #self_ty {
             fn members() -> Vec<jsg::Member> where Self: Sized {
-                vec![#(#method_registrations,)*]
+                vec![#(#method_registrations,)* #(#constant_registrations,)*]
             }
 
             fn get_drop_fn(&self) -> unsafe extern "C" fn(*mut jsg::v8::ffi::Isolate, *mut std::os::raw::c_void) {
@@ -408,6 +449,58 @@ fn is_result_type(ty: &syn::Type) -> bool {
         return segment.ident == "Result";
     }
     false
+}
+
+/// Marks a `const` item inside a `#[jsg_resource]` impl block as a static constant
+/// exposed to JavaScript on both the constructor and prototype.
+///
+/// The constant name is used as-is for the JavaScript property name (no camelCase
+/// conversion), matching the convention that constants are `UPPER_SNAKE_CASE` in
+/// both Rust and JavaScript.
+///
+/// Only numeric types are supported (`i8`..`i64`, `u8`..`u64`, `f32`, `f64`).
+///
+/// # Example
+///
+/// ```ignore
+/// #[jsg_resource]
+/// impl MyResource {
+///     #[jsg_static_constant]
+///     pub const MAX_SIZE: u32 = 1024;
+///
+///     #[jsg_static_constant]
+///     pub const STATUS_OK: i32 = 0;
+/// }
+/// // In JavaScript: MyResource.MAX_SIZE === 1024
+/// ```
+#[proc_macro_attribute]
+pub fn jsg_static_constant(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Marker attribute — the actual registration is handled by #[jsg_resource] on the impl block.
+    item
+}
+
+/// Returns true if the type is `&mut Lock` or `&mut jsg::Lock`.
+///
+/// When a method's first typed parameter matches this pattern, the macro passes the
+/// callback's `lock` directly instead of extracting it from JavaScript arguments.
+fn is_lock_ref(ty: &syn::Type) -> bool {
+    let syn::Type::Reference(ref_type) = ty else {
+        return false;
+    };
+    if ref_type.mutability.is_none() {
+        return false;
+    }
+    let syn::Type::Path(type_path) = ref_type.elem.as_ref() else {
+        return false;
+    };
+    let segments: Vec<_> = type_path.path.segments.iter().collect();
+    match segments.len() {
+        // `&mut Lock` — bare import (assumes `use jsg::Lock;`)
+        1 => segments[0].ident == "Lock",
+        // `&mut jsg::Lock` — fully qualified path
+        2 => segments[0].ident == "jsg" && segments[1].ident == "Lock",
+        _ => false,
+    }
 }
 
 /// Generates `jsg::Type` and `jsg::FromJS` implementations for union types.

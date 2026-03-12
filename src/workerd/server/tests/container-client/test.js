@@ -2,10 +2,16 @@ import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 import assert from 'node:assert';
 import { scheduler } from 'node:timers/promises';
 
-// 10s timeout for some of the requests going to the container.
-// Avoids unknown flakiness, and we get to have a stack trace with an
+// 5s timeout for some of the requests going to the container.
+// We can get to have a stack trace with an
 // abort signal.
 const DEFAULT_TIMEOUT_DURATION = 10_000;
+
+// Use a unique DO name per test invocation because different test flavors may
+// run concurrently, and this avoids them accidentally sharing the same object.
+function getRandomDurableObjectName(name) {
+  return `${name}-${crypto.randomUUID()}`;
+}
 
 // **IMPORTANT NOTE**
 //
@@ -64,9 +70,11 @@ export class DurableObjectExample extends DurableObject {
     const container = this.ctx.container;
     if (container.running) {
       let monitor = container.monitor().catch((_err) => {});
+
       await container.destroy();
       await monitor;
     }
+
     assert.strictEqual(container.running, false);
 
     // Start container with valid configuration
@@ -80,6 +88,7 @@ export class DurableObjectExample extends DurableObject {
     await this.waitUntilContainerIsHealthy();
 
     await container.destroy();
+
     await monitor;
     assert.strictEqual(container.running, false);
   }
@@ -187,7 +196,7 @@ export class DurableObjectExample extends DurableObject {
         'Sec-WebSocket-Key': 'x3JJHMbDL1EzLkh9GBhXDw==',
         'Sec-WebSocket-Version': '13',
       },
-      abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
     });
 
     // Should get WebSocket upgrade response
@@ -234,13 +243,13 @@ export class DurableObjectExample extends DurableObject {
           resp = await container.getTcpPort(8080).fetch('http://foo/bar/baz', {
             method: 'POST',
             body: 'hello',
-            abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+            signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
           });
           break;
         } catch (e) {
-          if (!e.message.includes('container port not found')) {
+          if (!e.message.includes('Container is not listening to port 8080')) {
             console.error(
-              'Error querying getTcpPort().fetch() that is not related to container port not found',
+              'Error querying getTcpPort().fetch() that is not related to the container not listening yet',
               e.message
             );
 
@@ -253,6 +262,7 @@ export class DurableObjectExample extends DurableObject {
             );
             throw e;
           }
+
           await scheduler.wait(500);
         }
       }
@@ -261,6 +271,29 @@ export class DurableObjectExample extends DurableObject {
       assert.equal(resp.statusText, 'OK');
       assert.strictEqual(await resp.text(), 'Hello World!');
     }
+  }
+
+  async testPortNotListening() {
+    const container = this.ctx.container;
+    if (container.running) {
+      const monitor = container.monitor().catch((_err) => {});
+      await container.destroy();
+      await monitor;
+    }
+
+    container.start();
+    const monitor = container.monitor().catch((_err) => {});
+    await this.waitUntilContainerIsHealthy();
+
+    await assert.rejects(
+      container.getTcpPort(8081).fetch('http://foo/bar', {
+        signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+      }),
+      /Container is not listening to port 8081/
+    );
+
+    await container.destroy();
+    await monitor;
   }
 
   async testPidNamespace() {
@@ -283,7 +316,7 @@ export class DurableObjectExample extends DurableObject {
     const resp = await container
       .getTcpPort(8080)
       .fetch('http://foo/pid-namespace', {
-        abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+        signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
       });
 
     assert.equal(resp.status, 200);
@@ -338,7 +371,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '1.2.3.4:80' },
-          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -352,7 +385,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '11.0.0.1:9999' },
-          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -366,7 +399,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '11.0.0.2:9999' },
-          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -380,7 +413,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '15.0.0.2:80' },
-          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(await response.text(), 'hello binding: 3 http://15.0.0.2/');
@@ -391,7 +424,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '[111::]:80' },
-          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(await response.text(), 'hello binding: 3 http://[111::]/');
@@ -402,7 +435,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': 'google.com/hello/world' },
-          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -422,7 +455,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '11.0.0.2:9999' },
-          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -437,7 +470,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '15.0.0.2:80' },
-          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -452,7 +485,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '15.0.0.55:80' },
-          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -471,7 +504,6 @@ export class DurableObjectExample extends DurableObject {
     }
 
     assert.strictEqual(container.running, false);
-
     // Set up egress mapping to route WebSocket requests to the binding
     await container.interceptOutboundHttp(
       '11.0.0.1:9999',
@@ -483,9 +515,7 @@ export class DurableObjectExample extends DurableObject {
       env: { WS_ENABLED: 'true', WS_PROXY_TARGET: '11.0.0.1:9999' },
     });
 
-    container.monitor().finally(() => {
-      console.log('Container exited');
-    });
+    container.monitor().catch((_err) => {});
 
     // Wait for container to be available
     await this.waitUntilContainerIsHealthy();
@@ -502,7 +532,7 @@ export class DurableObjectExample extends DurableObject {
         'Sec-WebSocket-Key': 'x3JJHMbDL1EzLkh9GBhXDw==',
         'Sec-WebSocket-Version': '13',
       },
-      abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
     });
 
     // Should get WebSocket upgrade response
@@ -580,7 +610,7 @@ export const testStatus = {
   async test(_ctrl, env) {
     for (const CONTAINER of [env.MY_CONTAINER, env.MY_DUPLICATE_CONTAINER]) {
       for (const name of ['testStatus', 'testStatus2']) {
-        const id = CONTAINER.idFromName(name);
+        const id = CONTAINER.idFromName(getRandomDurableObjectName(name));
         const stub = CONTAINER.get(id);
         assert.strictEqual(await stub.getStatus(), false);
       }
@@ -592,7 +622,7 @@ export const testStatus = {
 export const testBasics = {
   async test(_ctrl, env) {
     for (const CONTAINER of [env.MY_CONTAINER, env.MY_DUPLICATE_CONTAINER]) {
-      const id = CONTAINER.idFromName('testBasics');
+      const id = CONTAINER.idFromName(getRandomDurableObjectName('testBasics'));
       const stub = CONTAINER.get(id);
       await stub.testBasics();
     }
@@ -602,7 +632,9 @@ export const testBasics = {
 // Test exit code monitor functionality
 export const testExitCode = {
   async test(_ctrl, env) {
-    const id = env.MY_CONTAINER.idFromName('testExitCode');
+    const id = env.MY_CONTAINER.idFromName(
+      getRandomDurableObjectName('testExitCode')
+    );
     const stub = env.MY_CONTAINER.get(id);
     await stub.testExitCode();
   },
@@ -611,9 +643,21 @@ export const testExitCode = {
 // Test WebSocket functionality
 export const testWebSockets = {
   async test(_ctrl, env) {
-    const id = env.MY_CONTAINER.idFromName('testWebsockets');
+    const id = env.MY_CONTAINER.idFromName(
+      getRandomDurableObjectName('testWebsockets')
+    );
     const stub = env.MY_CONTAINER.get(id);
     await stub.testWs();
+  },
+};
+
+export const testPortNotListening = {
+  async test(_ctrl, env) {
+    const id = env.MY_CONTAINER.idFromName(
+      getRandomDurableObjectName('testPortNotListening')
+    );
+    const stub = env.MY_CONTAINER.get(id);
+    await stub.testPortNotListening();
   },
 };
 
@@ -622,7 +666,9 @@ export const testAlarm = {
   async test(_ctrl, env) {
     // Test that we can recover the use_containers flag correctly in setAlarm
     // after a DO has been evicted
-    const id = env.MY_CONTAINER.idFromName('testAlarm');
+    const id = env.MY_CONTAINER.idFromName(
+      getRandomDurableObjectName('testAlarm')
+    );
     let stub = env.MY_CONTAINER.get(id);
 
     // Start immediate alarm
@@ -670,8 +716,10 @@ export const testAlarm = {
 
 export const testContainerShutdown = {
   async test(_, env) {
+    const name = getRandomDurableObjectName('testContainerShutdown');
+
     {
-      const stub = env.MY_CONTAINER.getByName('testContainerShutdown');
+      const stub = env.MY_CONTAINER.getByName(name);
       await stub.start();
       await assert.rejects(() => stub.abort(), {
         name: 'Error',
@@ -683,7 +731,7 @@ export const testContainerShutdown = {
     await scheduler.wait(500);
 
     {
-      const stub = env.MY_CONTAINER.getByName('testContainerShutdown');
+      const stub = env.MY_CONTAINER.getByName(name);
 
       // Container should not be running after DO exited
       await stub.expectRunning(false);
@@ -693,10 +741,12 @@ export const testContainerShutdown = {
 
 export const testSetInactivityTimeout = {
   async test(_ctrl, env) {
-    {
-      const stub = env.MY_CONTAINER.getByName('testSetInactivityTimeout');
+    const name = getRandomDurableObjectName('testSetInactivityTimeout');
 
-      await stub.testSetInactivityTimeout(3000);
+    {
+      const stub = env.MY_CONTAINER.getByName(name);
+
+      await stub.testSetInactivityTimeout(10_000);
 
       await assert.rejects(() => stub.abort(), {
         name: 'Error',
@@ -711,7 +761,7 @@ export const testSetInactivityTimeout = {
     await scheduler.wait(500);
 
     {
-      const stub = env.MY_CONTAINER.getByName('testSetInactivityTimeout');
+      const stub = env.MY_CONTAINER.getByName(name);
 
       // Container should still be running after DO exited
       await stub.expectRunning(true);
@@ -725,7 +775,9 @@ export const testSetInactivityTimeout = {
 // init process, not the host's init process (systemd, launchd, etc.).
 export const testPidNamespace = {
   async test(_ctrl, env) {
-    const id = env.MY_CONTAINER.idFromName('testPidNamespace');
+    const id = env.MY_CONTAINER.idFromName(
+      getRandomDurableObjectName('testPidNamespace')
+    );
     const stub = env.MY_CONTAINER.get(id);
     const data = await stub.testPidNamespace();
 
@@ -742,7 +794,9 @@ export const testPidNamespace = {
 // Test setEgressHttp functionality - registers a binding's channel token with the container
 export const testSetEgressHttp = {
   async test(_ctrl, env) {
-    const id = env.MY_CONTAINER.idFromName('testSetEgressHttp');
+    const id = env.MY_CONTAINER.idFromName(
+      getRandomDurableObjectName('testSetEgressHttp')
+    );
     let stub = env.MY_CONTAINER.get(id);
     await stub.testSetEgressHttp();
     try {
@@ -759,7 +813,10 @@ export const testSetEgressHttp = {
 // Test WebSocket through interceptOutboundHttp - DO -> container -> worker binding via WebSocket
 export const testInterceptWebSocket = {
   async test(_ctrl, env) {
-    const id = env.MY_CONTAINER.idFromName('testInterceptWebSocket');
+    const id = env.MY_CONTAINER.idFromName(
+      getRandomDurableObjectName('testInterceptWebSocket')
+    );
+
     const stub = env.MY_CONTAINER.get(id);
     await stub.testInterceptWebSocket();
   },
