@@ -513,6 +513,11 @@ export type ExportedHandlerFetchHandler<
   env: Env,
   ctx: ExecutionContext<Props>,
 ) => Response | Promise<Response>;
+export type ExportedHandlerConnectHandler<Env = unknown, Props = unknown> = (
+  socket: Socket,
+  env: Env,
+  ctx: ExecutionContext<Props>,
+) => void | Promise<void>;
 export type ExportedHandlerTailHandler<Env = unknown, Props = unknown> = (
   events: TraceItem[],
   env: Env,
@@ -554,6 +559,7 @@ export interface ExportedHandler<
   Props = unknown,
 > {
   fetch?: ExportedHandlerFetchHandler<Env, CfHostMetadata, Props>;
+  connect?: ExportedHandlerConnectHandler<Env, Props>;
   tail?: ExportedHandlerTailHandler<Env, Props>;
   trace?: ExportedHandlerTraceHandler<Env, Props>;
   tailStream?: ExportedHandlerTailStreamHandler<Env, Props>;
@@ -585,6 +591,7 @@ export declare abstract class ColoLocalActorNamespace {
 }
 export interface DurableObject {
   fetch(request: Request): Response | Promise<Response>;
+  connect?(socket: Socket): void | Promise<void>;
   alarm?(alarmInfo?: AlarmInvocationInfo): void | Promise<void>;
   webSocketMessage?(
     ws: WebSocket,
@@ -602,7 +609,7 @@ export type DurableObjectStub<
   T extends Rpc.DurableObjectBranded | undefined = undefined,
 > = Fetcher<
   T,
-  "alarm" | "webSocketMessage" | "webSocketClose" | "webSocketError"
+  "alarm" | "connect" | "webSocketMessage" | "webSocketClose" | "webSocketError"
 > & {
   readonly id: DurableObjectId;
   readonly name?: string;
@@ -3239,6 +3246,7 @@ export interface TraceItem {
     | (
         | TraceItemFetchEventInfo
         | TraceItemJsRpcEventInfo
+        | TraceItemConnectEventInfo
         | TraceItemScheduledEventInfo
         | TraceItemAlarmEventInfo
         | TraceItemQueueEventInfo
@@ -3268,6 +3276,7 @@ export interface TraceItem {
 export interface TraceItemAlarmEventInfo {
   readonly scheduledTime: Date;
 }
+export interface TraceItemConnectEventInfo {}
 export interface TraceItemCustomEventInfo {}
 export interface TraceItemScheduledEventInfo {
   readonly scheduledTime: number;
@@ -3895,6 +3904,23 @@ export interface Container {
   interceptOutboundHttp(addr: string, binding: Fetcher): Promise<void>;
   interceptAllOutboundHttp(binding: Fetcher): Promise<void>;
   interceptOutboundHttps(addr: string, binding: Fetcher): Promise<void>;
+  snapshotDirectory(
+    options: ContainerDirectorySnapshotOptions,
+  ): Promise<ContainerDirectorySnapshot>;
+}
+export interface ContainerDirectorySnapshot {
+  id: string;
+  size: number;
+  dir: string;
+  name?: string;
+}
+export interface ContainerDirectorySnapshotOptions {
+  dir: string;
+  name?: string;
+}
+export interface ContainerSnapshotRestoreParams {
+  snapshot: ContainerDirectorySnapshot;
+  mountPoint?: string;
 }
 export interface ContainerStartupOptions {
   entrypoint?: string[];
@@ -3902,6 +3928,7 @@ export interface ContainerStartupOptions {
   env?: Record<string, string>;
   hardTimeout?: number | bigint;
   labels?: Record<string, string>;
+  snapshots?: ContainerSnapshotRestoreParams[];
 }
 /**
  * The **`FileSystemHandle`** interface of the File System API is an object which represents a file or directory entry.
@@ -11259,6 +11286,41 @@ export interface RequestInitCfProperties extends Record<string, unknown> {
    * (e.g. { '200-299': 86400, '404': 1, '500-599': 0 })
    */
   cacheTtlByStatus?: Record<string, number>;
+  /**
+   * Explicit Cache-Control header value to set on the response stored in cache.
+   * This gives full control over cache directives (e.g. 'public, max-age=3600, s-maxage=86400').
+   *
+   * Cannot be used together with `cacheTtl` or the `cache` request option (`no-store`/`no-cache`),
+   * as these are mutually exclusive cache control mechanisms. Setting both will throw a TypeError.
+   *
+   * Can be used together with `cacheTtlByStatus`.
+   */
+  cacheControl?: string;
+  /**
+   * Whether the response should be eligible for Cache Reserve storage.
+   */
+  cacheReserveEligible?: boolean;
+  /**
+   * Whether to respect strong ETags (as opposed to weak ETags) from the origin.
+   */
+  respectStrongEtag?: boolean;
+  /**
+   * Whether to strip ETag headers from the origin response before caching.
+   */
+  stripEtags?: boolean;
+  /**
+   * Whether to strip Last-Modified headers from the origin response before caching.
+   */
+  stripLastModified?: boolean;
+  /**
+   * Whether to enable Cache Deception Armor, which protects against web cache
+   * deception attacks by verifying the Content-Type matches the URL extension.
+   */
+  cacheDeceptionArmor?: boolean;
+  /**
+   * Minimum file size in bytes for a response to be eligible for Cache Reserve storage.
+   */
+  cacheReserveMinimumFileSize?: number;
   scrapeShield?: boolean;
   apps?: boolean;
   image?: RequestInitCfPropertiesImage;
@@ -13127,6 +13189,7 @@ export declare namespace CloudflareWorkersModule {
     constructor(ctx: ExecutionContext, env: Env);
     email?(message: ForwardableEmailMessage): void | Promise<void>;
     fetch?(request: Request): Response | Promise<Response>;
+    connect?(socket: Socket): void | Promise<void>;
     queue?(batch: MessageBatch<unknown>): void | Promise<void>;
     scheduled?(controller: ScheduledController): void | Promise<void>;
     tail?(events: TraceItem[]): void | Promise<void>;
@@ -13147,6 +13210,7 @@ export declare namespace CloudflareWorkersModule {
     constructor(ctx: DurableObjectState, env: Env);
     alarm?(alarmInfo?: AlarmInvocationInfo): void | Promise<void>;
     fetch?(request: Request): Response | Promise<Response>;
+    connect?(socket: Socket): void | Promise<void>;
     webSocketMessage?(
       ws: WebSocket,
       message: string | ArrayBuffer,
@@ -14136,6 +14200,9 @@ export declare namespace TailStream {
     readonly type: "fetch";
     readonly statusCode: number;
   }
+  interface ConnectEventInfo {
+    readonly type: "connect";
+  }
   type EventOutcome =
     | "ok"
     | "canceled"
@@ -14166,6 +14233,7 @@ export declare namespace TailStream {
     readonly scriptVersion?: ScriptVersion;
     readonly info:
       | FetchEventInfo
+      | ConnectEventInfo
       | JsRpcEventInfo
       | ScheduledEventInfo
       | AlarmEventInfo

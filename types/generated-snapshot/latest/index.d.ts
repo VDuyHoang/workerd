@@ -489,6 +489,11 @@ type ExportedHandlerFetchHandler<
   env: Env,
   ctx: ExecutionContext<Props>,
 ) => Response | Promise<Response>;
+type ExportedHandlerConnectHandler<Env = unknown, Props = unknown> = (
+  socket: Socket,
+  env: Env,
+  ctx: ExecutionContext<Props>,
+) => void | Promise<void>;
 type ExportedHandlerTailHandler<Env = unknown, Props = unknown> = (
   events: TraceItem[],
   env: Env,
@@ -530,6 +535,7 @@ interface ExportedHandler<
   Props = unknown,
 > {
   fetch?: ExportedHandlerFetchHandler<Env, CfHostMetadata, Props>;
+  connect?: ExportedHandlerConnectHandler<Env, Props>;
   tail?: ExportedHandlerTailHandler<Env, Props>;
   trace?: ExportedHandlerTraceHandler<Env, Props>;
   tailStream?: ExportedHandlerTailStreamHandler<Env, Props>;
@@ -557,6 +563,7 @@ interface Cloudflare {
 }
 interface DurableObject {
   fetch(request: Request): Response | Promise<Response>;
+  connect?(socket: Socket): void | Promise<void>;
   alarm?(alarmInfo?: AlarmInvocationInfo): void | Promise<void>;
   webSocketMessage?(
     ws: WebSocket,
@@ -574,7 +581,7 @@ type DurableObjectStub<
   T extends Rpc.DurableObjectBranded | undefined = undefined,
 > = Fetcher<
   T,
-  "alarm" | "webSocketMessage" | "webSocketClose" | "webSocketError"
+  "alarm" | "connect" | "webSocketMessage" | "webSocketClose" | "webSocketError"
 > & {
   readonly id: DurableObjectId;
   readonly name?: string;
@@ -3121,6 +3128,7 @@ interface TraceItem {
     | (
         | TraceItemFetchEventInfo
         | TraceItemJsRpcEventInfo
+        | TraceItemConnectEventInfo
         | TraceItemScheduledEventInfo
         | TraceItemAlarmEventInfo
         | TraceItemQueueEventInfo
@@ -3150,6 +3158,7 @@ interface TraceItem {
 interface TraceItemAlarmEventInfo {
   readonly scheduledTime: Date;
 }
+interface TraceItemConnectEventInfo {}
 interface TraceItemCustomEventInfo {}
 interface TraceItemScheduledEventInfo {
   readonly scheduledTime: number;
@@ -3767,12 +3776,23 @@ interface Container {
   interceptOutboundHttp(addr: string, binding: Fetcher): Promise<void>;
   interceptAllOutboundHttp(binding: Fetcher): Promise<void>;
 }
+interface ContainerDirectorySnapshot {
+  id: string;
+  size: number;
+  dir: string;
+  name?: string;
+}
+interface ContainerSnapshotRestoreParams {
+  snapshot: ContainerDirectorySnapshot;
+  mountPoint?: string;
+}
 interface ContainerStartupOptions {
   entrypoint?: string[];
   enableInternet: boolean;
   env?: Record<string, string>;
   hardTimeout?: number | bigint;
   labels?: Record<string, string>;
+  snapshots?: ContainerSnapshotRestoreParams[];
 }
 /**
  * The **`MessagePort`** interface of the Channel Messaging API represents one of the two ports of a MessageChannel, allowing messages to be sent from one port and listening out for them arriving at the other.
@@ -10593,6 +10613,41 @@ interface RequestInitCfProperties extends Record<string, unknown> {
    * (e.g. { '200-299': 86400, '404': 1, '500-599': 0 })
    */
   cacheTtlByStatus?: Record<string, number>;
+  /**
+   * Explicit Cache-Control header value to set on the response stored in cache.
+   * This gives full control over cache directives (e.g. 'public, max-age=3600, s-maxage=86400').
+   *
+   * Cannot be used together with `cacheTtl` or the `cache` request option (`no-store`/`no-cache`),
+   * as these are mutually exclusive cache control mechanisms. Setting both will throw a TypeError.
+   *
+   * Can be used together with `cacheTtlByStatus`.
+   */
+  cacheControl?: string;
+  /**
+   * Whether the response should be eligible for Cache Reserve storage.
+   */
+  cacheReserveEligible?: boolean;
+  /**
+   * Whether to respect strong ETags (as opposed to weak ETags) from the origin.
+   */
+  respectStrongEtag?: boolean;
+  /**
+   * Whether to strip ETag headers from the origin response before caching.
+   */
+  stripEtags?: boolean;
+  /**
+   * Whether to strip Last-Modified headers from the origin response before caching.
+   */
+  stripLastModified?: boolean;
+  /**
+   * Whether to enable Cache Deception Armor, which protects against web cache
+   * deception attacks by verifying the Content-Type matches the URL extension.
+   */
+  cacheDeceptionArmor?: boolean;
+  /**
+   * Minimum file size in bytes for a response to be eligible for Cache Reserve storage.
+   */
+  cacheReserveMinimumFileSize?: number;
   scrapeShield?: boolean;
   apps?: boolean;
   image?: RequestInitCfPropertiesImage;
@@ -12505,6 +12560,7 @@ declare namespace CloudflareWorkersModule {
     constructor(ctx: ExecutionContext, env: Env);
     email?(message: ForwardableEmailMessage): void | Promise<void>;
     fetch?(request: Request): Response | Promise<Response>;
+    connect?(socket: Socket): void | Promise<void>;
     queue?(batch: MessageBatch<unknown>): void | Promise<void>;
     scheduled?(controller: ScheduledController): void | Promise<void>;
     tail?(events: TraceItem[]): void | Promise<void>;
@@ -12525,6 +12581,7 @@ declare namespace CloudflareWorkersModule {
     constructor(ctx: DurableObjectState, env: Env);
     alarm?(alarmInfo?: AlarmInvocationInfo): void | Promise<void>;
     fetch?(request: Request): Response | Promise<Response>;
+    connect?(socket: Socket): void | Promise<void>;
     webSocketMessage?(
       ws: WebSocket,
       message: string | ArrayBuffer,
@@ -13524,6 +13581,9 @@ declare namespace TailStream {
     readonly type: "fetch";
     readonly statusCode: number;
   }
+  interface ConnectEventInfo {
+    readonly type: "connect";
+  }
   type EventOutcome =
     | "ok"
     | "canceled"
@@ -13554,6 +13614,7 @@ declare namespace TailStream {
     readonly scriptVersion?: ScriptVersion;
     readonly info:
       | FetchEventInfo
+      | ConnectEventInfo
       | JsRpcEventInfo
       | ScheduledEventInfo
       | AlarmEventInfo
