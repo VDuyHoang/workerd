@@ -580,6 +580,7 @@ declare abstract class Navigator {
 interface AlarmInvocationInfo {
   readonly isRetry: boolean;
   readonly retryCount: number;
+  readonly scheduledTime: number;
 }
 interface Cloudflare {
   readonly compatibilityFlags: Record<string, boolean>;
@@ -2213,6 +2214,7 @@ type Fetcher<
   queue(
     queueName: string,
     messages: ServiceBindingQueueMessage[],
+    metadata?: MessageBatchMetadata,
   ): Promise<FetcherQueueResult>;
   scheduled(options?: FetcherScheduledOptions): Promise<FetcherScheduledResult>;
 };
@@ -2397,11 +2399,34 @@ interface KVNamespaceGetWithMetadataResult<Value, Metadata> {
 }
 type QueueContentType = "text" | "bytes" | "json" | "v8";
 interface Queue<Body = unknown> {
-  send(message: Body, options?: QueueSendOptions): Promise<void>;
+  send(message: Body, options?: QueueSendOptions): Promise<QueueSendResponse>;
   sendBatch(
     messages: Iterable<MessageSendRequest<Body>>,
     options?: QueueSendBatchOptions,
-  ): Promise<void>;
+  ): Promise<QueueSendBatchResponse>;
+  metrics(): Promise<QueueMetrics>;
+}
+interface QueueSendMetrics {
+  backlogCount: number;
+  backlogBytes: number;
+  oldestMessageTimestamp: number;
+}
+interface QueueSendMetadata {
+  metrics: QueueSendMetrics;
+}
+interface QueueSendResponse {
+  metadata: QueueSendMetadata;
+}
+interface QueueSendBatchMetrics {
+  backlogCount: number;
+  backlogBytes: number;
+  oldestMessageTimestamp: number;
+}
+interface QueueSendBatchMetadata {
+  metrics: QueueSendBatchMetrics;
+}
+interface QueueSendBatchResponse {
+  metadata: QueueSendBatchMetadata;
 }
 interface QueueSendOptions {
   contentType?: QueueContentType;
@@ -2414,6 +2439,19 @@ interface MessageSendRequest<Body = unknown> {
   body: Body;
   contentType?: QueueContentType;
   delaySeconds?: number;
+}
+interface QueueMetrics {
+  backlogCount: number;
+  backlogBytes: number;
+  oldestMessageTimestamp: number;
+}
+interface MessageBatchMetrics {
+  backlogCount: number;
+  backlogBytes: number;
+  oldestMessageTimestamp: number;
+}
+interface MessageBatchMetadata {
+  metrics: MessageBatchMetrics;
 }
 interface QueueRetryBatch {
   retry: boolean;
@@ -2437,12 +2475,14 @@ interface Message<Body = unknown> {
 interface QueueEvent<Body = unknown> extends ExtendableEvent {
   readonly messages: readonly Message<Body>[];
   readonly queue: string;
+  readonly metadata: MessageBatchMetadata;
   retryAll(options?: QueueRetryOptions): void;
   ackAll(): void;
 }
 interface MessageBatch<Body = unknown> {
   readonly messages: readonly Message<Body>[];
   readonly queue: string;
+  readonly metadata: MessageBatchMetadata;
   retryAll(options?: QueueRetryOptions): void;
   ackAll(): void;
 }
