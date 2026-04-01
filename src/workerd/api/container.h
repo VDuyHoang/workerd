@@ -29,11 +29,6 @@ class Container: public jsg::Object {
     jsg::Optional<kj::String> name;
 
     JSG_STRUCT(id, size, dir, name);
-    JSG_STRUCT_TS_OVERRIDE_DYNAMIC(CompatibilityFlags::Reader flags) {
-      if (!flags.getWorkerdExperimental()) {
-        JSG_TS_OVERRIDE(type DirectorySnapshot = never);
-      }
-    }
   };
 
   struct DirectorySnapshotOptions {
@@ -43,16 +38,25 @@ class Container: public jsg::Object {
     JSG_STRUCT(dir, name);
   };
 
-  struct SnapshotRestoreParams {
+  struct DirectorySnapshotRestoreParams {
     DirectorySnapshot snapshot;
     jsg::Optional<kj::String> mountPoint;
 
     JSG_STRUCT(snapshot, mountPoint);
-    JSG_STRUCT_TS_OVERRIDE_DYNAMIC(CompatibilityFlags::Reader flags) {
-      if (!flags.getWorkerdExperimental()) {
-        JSG_TS_OVERRIDE(type SnapshotRestoreParams = never);
-      }
-    }
+  };
+
+  struct Snapshot {
+    kj::String id;
+    double size;
+    jsg::Optional<kj::String> name;
+
+    JSG_STRUCT(id, size, name);
+  };
+
+  struct SnapshotOptions {
+    jsg::Optional<kj::String> name;
+
+    JSG_STRUCT(name);
   };
 
   struct StartupOptions {
@@ -61,11 +65,18 @@ class Container: public jsg::Object {
     jsg::Optional<jsg::Dict<kj::String>> env;
     jsg::Optional<int64_t> hardTimeout;
     jsg::Optional<jsg::Dict<kj::String>> labels;
-    jsg::Optional<kj::Array<SnapshotRestoreParams>> snapshots;
+    jsg::Optional<kj::Array<DirectorySnapshotRestoreParams>> directorySnapshots;
+    jsg::Optional<Snapshot> containerSnapshot;
 
     // TODO(containers): Allow intercepting stdin/stdout/stderr by specifying streams here.
 
-    JSG_STRUCT(entrypoint, enableInternet, env, hardTimeout, labels, snapshots);
+    JSG_STRUCT(entrypoint,
+        enableInternet,
+        env,
+        hardTimeout,
+        labels,
+        directorySnapshots,
+        containerSnapshot);
     JSG_STRUCT_TS_OVERRIDE_DYNAMIC(CompatibilityFlags::Reader flags) {
       if (flags.getWorkerdExperimental()) {
         JSG_TS_OVERRIDE(ContainerStartupOptions {
@@ -74,7 +85,8 @@ class Container: public jsg::Object {
           env?: Record<string, string>;
           hardTimeout?: number | bigint;
           labels?: Record<string, string>;
-          snapshots?: ContainerSnapshotRestoreParams[];
+          directorySnapshots?: ContainerDirectorySnapshotRestoreParams[];
+          containerSnapshot?: ContainerSnapshot;
         });
       } else {
         JSG_TS_OVERRIDE(ContainerStartupOptions {
@@ -83,7 +95,8 @@ class Container: public jsg::Object {
           env?: Record<string, string>;
           hardTimeout?: never;
           labels?: Record<string, string>;
-          snapshots?: never;
+          directorySnapshots?: ContainerDirectorySnapshotRestoreParams[];
+          containerSnapshot?: ContainerSnapshot;
         });
       }
     }
@@ -107,6 +120,7 @@ class Container: public jsg::Object {
       jsg::Lock& js, kj::String addr, jsg::Ref<Fetcher> binding);
   jsg::Promise<DirectorySnapshot> snapshotDirectory(
       jsg::Lock& js, DirectorySnapshotOptions options);
+  jsg::Promise<Snapshot> snapshotContainer(jsg::Lock& js, SnapshotOptions options);
 
   // TODO(containers): listenTcp()
 
@@ -121,9 +135,10 @@ class Container: public jsg::Object {
 
     JSG_METHOD(interceptOutboundHttp);
     JSG_METHOD(interceptAllOutboundHttp);
+    JSG_METHOD(snapshotDirectory);
+    JSG_METHOD(snapshotContainer);
     if (flags.getWorkerdExperimental()) {
       JSG_METHOD(interceptOutboundHttps);
-      JSG_METHOD(snapshotDirectory);
     }
   }
 
@@ -147,6 +162,7 @@ class Container: public jsg::Object {
 
 #define EW_CONTAINER_ISOLATE_TYPES                                                                 \
   api::Container, api::Container::DirectorySnapshot, api::Container::DirectorySnapshotOptions,     \
-      api::Container::SnapshotRestoreParams, api::Container::StartupOptions
+      api::Container::DirectorySnapshotRestoreParams, api::Container::Snapshot,                    \
+      api::Container::SnapshotOptions, api::Container::StartupOptions
 
 }  // namespace workerd::api

@@ -16,6 +16,9 @@ pub use feature_flags::FeatureFlags;
 pub use resource::Rc;
 pub use resource::Resource;
 pub use resource::Weak;
+pub use v8::ArrayBuffer;
+pub use v8::ArrayBufferView;
+pub use v8::BackingStore;
 pub use v8::BigInt64Array;
 pub use v8::BigUint64Array;
 pub use v8::Float32Array;
@@ -674,6 +677,18 @@ impl From<u64> for ConstantValue {
     }
 }
 
+/// Where a [`Member::Property`] is attached on the JavaScript object.
+///
+/// This is a re-export of the CXX bridge type in [`v8::ffi`] so that callers
+/// do not need to import `jsg::v8::ffi` directly.  The three variants behave
+/// as follows:
+///
+/// - `Prototype` — accessor on the prototype chain; enumerable.
+/// - `Instance`  — own accessor on every instance; enumerable.
+/// - `Inspect`   — symbol-keyed on the prototype; hidden from normal enumeration,
+///   surfaced by `node:util` `inspect()`.
+pub use crate::v8::ffi::PropertyKind;
+
 pub enum Member {
     Constructor {
         callback: unsafe extern "C" fn(*mut v8::ffi::FunctionCallbackInfo),
@@ -682,10 +697,14 @@ pub enum Member {
         name: String,
         callback: unsafe extern "C" fn(*mut v8::ffi::FunctionCallbackInfo),
     },
+    /// A property accessor with configurable placement. `setter_callback = None`
+    /// makes the property read-only; `Inspect` properties are always read-only.
     Property {
         name: String,
+        kind: PropertyKind,
         getter_callback: unsafe extern "C" fn(*mut v8::ffi::FunctionCallbackInfo),
-        setter_callback: unsafe extern "C" fn(*mut v8::ffi::FunctionCallbackInfo),
+        /// `None` for read-only properties.
+        setter_callback: Option<unsafe extern "C" fn(*mut v8::ffi::FunctionCallbackInfo)>,
     },
     StaticMethod {
         name: String,
