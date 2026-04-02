@@ -135,7 +135,7 @@ JsObject JsObject::jsonClone(Lock& js) {
 
 JsValue JsObject::getPrototype(Lock& js) {
   if (inner->IsProxy()) {
-    // Here we emulate the behavior of v8's GetPrototypeV2() function for proxies.
+    // Here we emulate the behavior of v8's GetPrototype() function for proxies.
     // If the proxy has a getPrototypeOf trap, we call it and return the result.
     // Otherwise we return the prototype of the target object.
     // Note that we do not check if the target object is extensible or not, or
@@ -168,7 +168,12 @@ JsValue JsObject::getPrototype(Lock& js) {
     // given how we are currently using this function.
     return ret;
   }
+#if V8_MAJOR_VERSION >= 15 || (V8_MAJOR_VERSION == 14 && V8_MINOR_VERSION >= 7)
+  return JsValue(inner->GetPrototype());
+#else
+  // TODO(cleanup): Remove when unnecessary.
   return JsValue(inner->GetPrototypeV2());
+#endif
 }
 
 kj::String JsSymbol::description(Lock& js) const {
@@ -749,6 +754,9 @@ kj::ArrayPtr<kj::byte> JsBufferSource::asArrayPtr() {
       return nullptr;
     }
     return kj::ArrayPtr(static_cast<kj::byte*>(buf->Data()), buf->ByteLength());
+  } else if (inner->IsSharedArrayBuffer()) {
+    auto buf = inner.As<v8::SharedArrayBuffer>();
+    return kj::ArrayPtr(static_cast<kj::byte*>(buf->Data()), buf->ByteLength());
   } else {
     KJ_DASSERT(inner->IsArrayBufferView());
     auto view = inner.As<v8::ArrayBufferView>();
@@ -769,6 +777,9 @@ size_t JsBufferSource::size() const {
       return 0;
     }
     return buf->ByteLength();
+  } else if (inner->IsSharedArrayBuffer()) {
+    auto buf = inner.As<v8::SharedArrayBuffer>();
+    return buf->ByteLength();
   } else {
     KJ_DASSERT(inner->IsArrayBufferView());
     auto view = inner.As<v8::ArrayBufferView>();
@@ -781,9 +792,15 @@ size_t JsBufferSource::size() const {
 
 bool JsBufferSource::isIntegerType() const {
   v8::Local<v8::Value> inner = *this;
-  return inner->IsUint8Array() || inner->IsUint8ClampedArray() || inner->IsInt8Array() ||
-      inner->IsUint16Array() || inner->IsInt16Array() || inner->IsUint32Array() ||
-      inner->IsInt32Array() || inner->IsBigInt64Array() || inner->IsBigUint64Array();
+  return inner->IsArrayBuffer() || inner->IsSharedArrayBuffer() || inner->IsUint8Array() ||
+      inner->IsUint8ClampedArray() || inner->IsInt8Array() || inner->IsUint16Array() ||
+      inner->IsInt16Array() || inner->IsUint32Array() || inner->IsInt32Array() ||
+      inner->IsBigInt64Array() || inner->IsBigUint64Array();
+}
+
+bool JsBufferSource::isSharedArrayBuffer() const {
+  v8::Local<v8::Value> inner = *this;
+  return inner->IsSharedArrayBuffer();
 }
 
 bool JsBufferSource::isArrayBuffer() const {
@@ -799,6 +816,16 @@ bool JsBufferSource::isArrayBufferView() const {
 kj::Array<kj::byte> JsBufferSource::copy() {
   auto ptr = asArrayPtr();
   return kj::heapArray(ptr);
+}
+
+bool JsBufferSource::isResizable() const {
+  v8::Local<v8::Value> inner = *this;
+  if (inner->IsArrayBuffer()) {
+    return inner.As<v8::ArrayBuffer>()->IsResizableByUserJavaScript();
+  } else if (inner->IsArrayBufferView()) {
+    return inner.As<v8::ArrayBufferView>()->Buffer()->IsResizableByUserJavaScript();
+  }
+  return false;
 }
 
 // ======================================================================================
