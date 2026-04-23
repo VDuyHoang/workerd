@@ -49,6 +49,7 @@ namespace {
   V(HIBERNATABLEWEBSOCKET, "hibernatableWebSocket")                                                \
   V(ID, "id")                                                                                      \
   V(INFO, "info")                                                                                  \
+  V(INTERNALERROR, "internalError")                                                                \
   V(INVOCATIONID, "invocationId")                                                                  \
   V(JSRPC, "jsrpc")                                                                                \
   V(KILLSWITCH, "killSwitch")                                                                      \
@@ -329,6 +330,8 @@ jsg::JsValue ToJs(jsg::Lock& js, const EventOutcome& outcome, StringCache& cache
       return cache.get(js, RESPONSESTREAMDISCONNECTED_STR);
     case EventOutcome::SCRIPT_NOT_FOUND:
       return cache.get(js, SCRIPTNOTFOUND_STR);
+    case EventOutcome::INTERNAL_ERROR:
+      return cache.get(js, INTERNALERROR_STR);
     case EventOutcome::UNKNOWN:
       return cache.get(js, UNKNOWN_STR);
   }
@@ -1096,8 +1099,8 @@ bool TailStreamWriter::reportImpl(TailEvent&& event, size_t sizeHint) {
       // event indicating how many events were dropped if applicable.
       if (event.event.is<Outcome>() && active->droppedEvents > 0) {
         StreamDiagnosticsEvent diag(active->droppedEvents);
-        TailEvent diagTailEvent(event.spanContext.clone(), event.invocationId, event.timestamp,
-            event.sequence, kj::mv(diag));
+        TailEvent diagTailEvent(SpanContext::clone(event.spanContext), event.invocationId,
+            event.timestamp, event.sequence, kj::mv(diag));
         active->queue.push(kj::mv(diagTailEvent));
         // Increment the outcome sequence number to keep things consistent.
         event.sequence++;

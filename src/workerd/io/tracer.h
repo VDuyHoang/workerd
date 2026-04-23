@@ -6,6 +6,7 @@
 
 #include <workerd/io/io-context.h>
 #include <workerd/io/trace.h>
+#include <workerd/util/weak-refs.h>
 
 #include <kj/refcount.h>
 
@@ -24,7 +25,16 @@ class WorkerTracer;
 // there will be plenty of cleanup potential.
 class BaseTracer: public kj::Refcounted {
  public:
-  virtual ~BaseTracer() noexcept(false) {};
+  virtual ~BaseTracer() noexcept(false) {
+    selfRef->invalidate();
+  };
+
+  // Weak reference to this tracer, used by user-tracing SpanSubmitter implementations so
+  // abandoned user promises cannot pin tracer lifetime.
+  using WeakRef = workerd::WeakRef<BaseTracer>;
+  kj::Own<WeakRef> getWeakRef() {
+    return kj::addRef(*selfRef);
+  }
 
   // Adds log line to trace.  For Spectre, timestamp should only be as accurate as JS Date.now().
   virtual void addLog(const tracing::InvocationSpanContext& context,
@@ -69,9 +79,9 @@ class BaseTracer: public kj::Refcounted {
   // be available afterwards.
   virtual void recordTimestamp(kj::Date timestamp) = 0;
 
-  SpanParent makeUserRequestSpan();
+  SpanParent makeUserRequestSpan(tracing::TraceId traceId);
 
-  using MakeUserRequestSpanFunc = kj::Function<SpanParent()>;
+  using MakeUserRequestSpanFunc = kj::Function<SpanParent(tracing::TraceId)>;
 
   // Allow setting the user request span after the tracer has been created so its observer can
   // reference the tracer. This can only be set once.
@@ -109,6 +119,10 @@ class BaseTracer: public kj::Refcounted {
   // When true, the destructor will not log a warning about missing Onset event.
   // Set via markUnused() when a tracer is intentionally not used (e.g., duplicate alarm requests).
   bool markedUnused = false;
+
+ private:
+  friend class workerd::WeakRef<BaseTracer>;
+  kj::Own<WeakRef> selfRef = kj::refcounted<WeakRef>(kj::Badge<BaseTracer>(), *this);
 };
 
 // Records a worker stage's trace information into a Trace object.  When all references to the
@@ -211,23 +225,35 @@ class UserSpanObserver final: public SpanObserver {
   UserSpanObserver(kj::Own<SpanSubmitter> submitter)
       : submitter(kj::mv(submitter)),
         spanId(tracing::SpanId::nullId),
-        parentSpanId(tracing::SpanId::nullId) {}
+        parentSpanId(tracing::SpanId::nullId),
+        traceId(nullptr) {}
+  // constructor for top-level observer with trace ID
+  UserSpanObserver(kj::Own<SpanSubmitter> submitter, tracing::TraceId traceId)
+      : submitter(kj::mv(submitter)),
+        spanId(tracing::SpanId::nullId),
+        parentSpanId(tracing::SpanId::nullId),
+        traceId(kj::mv(traceId)) {}
   // constructor for subsequent observers attached to a span
-  UserSpanObserver(kj::Own<SpanSubmitter> submitter, tracing::SpanId parentSpanId)
+  UserSpanObserver(
+      kj::Own<SpanSubmitter> submitter, tracing::SpanId parentSpanId, tracing::TraceId traceId)
       : submitter(kj::mv(submitter)),
         spanId(this->submitter->makeSpanId()),
-        parentSpanId(parentSpanId) {}
+        parentSpanId(parentSpanId),
+        traceId(kj::mv(traceId)) {}
   KJ_DISALLOW_COPY(UserSpanObserver);
 
   kj::Own<SpanObserver> newChild() override;
   void onOpen(kj::ConstString operationName, kj::Date startTime) override;
   void onClose(kj::Date endTime, Span::TagMap&& tags, kj::Vector<Span::Log>&& logs) override;
   kj::Date getTime() override;
+  kj::Maybe<tracing::SpanContext> toSpanContext() override;
+  tracing::SpanId getSpanId();
 
  private:
   kj::Own<SpanSubmitter> submitter;
   tracing::SpanId spanId;
   tracing::SpanId parentSpanId;
+  tracing::TraceId traceId;
   // Ideally, the span observer wouldn't need to maintain startTime, but we still need it at present
   // for timestamp adjustments.
   kj::Date startTime = kj::UNIX_EPOCH;
